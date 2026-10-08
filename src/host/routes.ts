@@ -12,6 +12,7 @@ import { loadLibrary, searchLibrary } from '../library/store.ts'
 import type { Library } from '../library/store.ts'
 import { suggestTemplates } from '../prompt/match.ts'
 import { appendSpend, readSpend, summarizeSpend } from '../store/spend.ts'
+import { runBatch, runGeneration } from './generate.ts'
 import type { PluginRuntime } from './registry.ts'
 
 export const PLUGIN_NAME = 'dsh-kylin-images'
@@ -72,9 +73,14 @@ export async function handleRequest(
         value: {
           ...runtime.vault.publicData(),
           spend: summarizeSpend(readSpend(runtime.home)),
+          cache: runtime.cache.stats(),
         },
       },
     }
+  }
+
+  if (method === 'GET' && action === 'cache.stats') {
+    return { status: 200, payload: { ok: true, value: runtime.cache.stats() } }
   }
 
   if (method !== 'POST') {
@@ -149,44 +155,75 @@ export async function handleRequest(
     return { status: 200, payload: { ok: true, value: composed } }
   }
 
-  if (action === 'generate') {
-    const settings = runtime.vault.settings()
-    const channelId = typeof payload['channelId'] === 'string' && payload['channelId'] !== ''
-      ? payload['channelId']
-      : settings.defaultChannelId
-    const channel = runtime.vault.find(channelId)
-    if (channel === undefined) {
-      return { status: 400, payload: errorPayload('no-channel', '尚未配置通道：请在「视觉模型」设置里添加一个通道') }
+  if (action === 'channels.probe') {
+    const id = String(payload['id'] ?? runtime.vault.settings().defaultChannelId)
+    const channel = runtime.vault.find(id)
+    if (channel === undefined) return { status: 404, payload: errorPayload('not-found', '找不到通道 ' + id) }
+    const provider = runtime.providerFor(channel)
+    if (provider.probe === undefined) {
+      const health = await provider.health(channel)
+      return { status: 200, payload: { ok: true, value: { channelId: channel.id, ...health, endpointStyle: channel.kind } } }
     }
-    const composed = composePrompt({ prompt: payload['prompt'], globalNegative: settings.globalNegative })
-    const outputDir = typeof payload['outputDir'] === 'string' && payload['outputDir'] !== ''
-      ? payload['outputDir']
-      : join(runtime.home, 'outputs')
-    mkdirSync(outputDir, { recursive: true, mode: 0o700 })
-    const started = Date.now()
-    const result = await runtime.providerFor(channel).generate(channel, {
-      channelId: channel.id,
-      model: typeof payload['model'] === 'string' && payload['model'] !== '' ? payload['model'] : settings.defaultModel,
-      prompt: composed.prompt,
-      negative: composed.negative,
-      size: composed.size.size,
-      resolution: composed.size.resolution,
-      count: settings.defaultCount,
-      outputDir,
-      fileStem: 'img-' + String(started),
+    const result = await provider.probe(channel, { realRun: payload['realRun'] === true, outputDir: join(runtime.home, 'probe') })
+    return { status: 200, payload: { ok: true, value: { channelId: channel.id, ...result } } }
+  }
+
+  if (action === 'generate') {
+    const outcome = await runGeneration(runtime, {
+      prompt: payload['prompt'],
+      channelId: typeof payload['channelId'] === 'string' ? payload['channelId'] : undefined,
+      model: typeof payload['model'] === 'string' ? payload['model'] : undefined,
+      outputDir: typeof payload['outputDir'] === 'string' ? payload['outputDir'] : undefined,
+      count: typeof payload['count'] === 'number' ? payload['count'] : undefined,
+      seed: typeof payload['seed'] === 'number' ? payload['seed'] : undefined,
+      confirm: payload['confirm'] === true,
+      useCache: payload['useCache'] === false ? false : undefined,
     })
-    appendSpend(runtime.home, {
-      at: new Date().toISOString(),
-      channelId: channel.id,
-      model: result.model,
-      count: result.images.length,
-      amount: result.quote.amount,
-      currency: result.quote.currency,
-      confidence: result.quote.confidence,
-      promptChars: composed.prompt.length,
-      durationMs: Date.now() - started,
+    if (outcome.kind === 'error') {
+      const code = outcome.message.includes('尚未配置') ? 'no-channel' : 'generation-failed'
+      return { status: code === 'no-channel' ? 400 : 502, payload: errorPayload(code, outcome.message) }
+    }
+    if (outcome.kind === 'confirm-required') {
+      return { status: 409, payload: { ok: false, error: { code: 'confirm-required', message: outcome.message }, value: outcome } }
+    }
+    return { status: 200, payload: { ok: true, value: outcome } }
+  }
+
+  if (action === 'batch') {
+    const rawItems = Array.isArray(payload['items']) ? payload['items'] : []
+    if (rawItems.length === 0) return { status: 400, payload: errorPayload('empty-batch', 'items 不能为空') }
+    if (rawItems.length > 40) return { status: 400, payload: errorPayload('batch-too-large', '单次批量最多 40 项，请分批') }
+    const items = rawItems.map((raw) => {
+      const item = isRecord(raw) ? raw : {}
+      return {
+        prompt: item['prompt'],
+        channelId: typeof item['channelId'] === 'string' ? item['channelId'] : undefined,
+        model: typeof item['model'] === 'string' ? item['model'] : undefined,
+        outputDir: typeof item['outputDir'] === 'string' ? item['outputDir'] : undefined,
+        fileStem: typeof item['fileStem'] === 'string' ? item['fileStem'] : undefined,
+        count: typeof item['count'] === 'number' ? item['count'] : undefined,
+        seed: typeof item['seed'] === 'number' ? item['seed'] : undefined,
+        confirm: payload['confirm'] === true,
+      }
     })
-    return { status: 200, payload: { ok: true, value: { ...result, negative: composed.negative, warnings: composed.warnings } } }
+    const concurrency = typeof payload['concurrency'] === 'number' ? payload['concurrency'] : runtime.vault.settings().concurrency
+    if (payload['confirm'] !== true) {
+      const probes = await runBatch(runtime, items.map((item) => ({ ...item, confirm: false, dryRun: true })), 1)
+      const blocked = probes.filter((outcome) => outcome.kind === 'confirm-required')
+      if (blocked.length > 0) {
+        return { status: 409, payload: { ok: false, error: { code: 'confirm-required', message: '整批有 ' + String(blocked.length) + ' 项需要先确认成本' }, value: { outcomes: probes } } }
+      }
+    }
+    const outcomes = await runBatch(runtime, items, concurrency)
+    return { status: 200, payload: { ok: true, value: { outcomes } } }
+  }
+
+  if (action === 'cache.stats') {
+    return { status: 200, payload: { ok: true, value: runtime.cache.stats() } }
+  }
+
+  if (action === 'cache.clear') {
+    return { status: 200, payload: { ok: true, value: { cleared: runtime.cache.clear() } } }
   }
 
   return { status: 404, payload: errorPayload('unknown-action', '未知操作 ' + action) }

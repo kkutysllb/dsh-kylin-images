@@ -1,17 +1,19 @@
 /**
  * 工具面（img_*）。
  *
- * M1 交付三个：img_channels（通道健康与配置总览）、img_library（样式库检索）、
- * img_generate（结构化提示词 -> 编译 -> 生成 -> 落盘 -> 记账）。
- * img_compose / img_batch / img_comic 在 M2/M3 补齐。
+ * 分工：技能负责流程与判断，工具负责编译与执行。
+ * 全部工具共用 host/generate.ts 的编排，保证工具、HTTP API、批量三条路语义一致。
  */
-import { mkdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { composePrompt } from '../prompt/compose.ts'
 import { suggestTemplates } from '../prompt/match.ts'
 import { loadLibrary, searchLibrary } from '../library/store.ts'
 import type { Library } from '../library/store.ts'
-import { appendSpend, readSpend, summarizeSpend } from '../store/spend.ts'
+import { describeError } from '../provider/errors.ts'
+import { describeQuote } from '../provider/pricing.ts'
+import { readSpend, summarizeSpend } from '../store/spend.ts'
+import { runBatch, runGeneration } from '../host/generate.ts'
+import type { GenerationInput, GenerationOutcome } from '../host/generate.ts'
 import type { PluginRuntime } from '../host/registry.ts'
 
 export interface ToolOutput {
@@ -56,48 +58,81 @@ function num(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined
 }
 
+function str(value: unknown): string | undefined {
+  return typeof value === 'string' && value !== '' ? value : undefined
+}
+
+function describeOutcome(outcome: GenerationOutcome): string {
+  const lines: string[] = [outcome.message]
+  for (const image of outcome.images) {
+    const size = image.width === undefined ? '' : '（' + String(image.width) + 'x' + String(image.height) + '）'
+    lines.push('- ' + image.path + size)
+  }
+  if (outcome.kind === 'generated') lines.push('成本：' + describeQuote(outcome.quote))
+  if (outcome.composed !== undefined && outcome.composed.negative !== '') {
+    lines.push('负面清单：' + outcome.composed.negative)
+  }
+  for (const warning of outcome.warnings) lines.push('提示：' + warning)
+  if (outcome.images.length > 0) lines.push('用 read_image 查看产物即可自评效果。')
+  return lines.join(String.fromCharCode(10))
+}
+
 function channelsTool(runtime: PluginRuntime): ToolDefinition {
   return {
     name: 'img_channels',
-    description: '查看图像生成通道的配置与健康状态（密钥一律脱敏），或对某个通道做连通性自检。',
     output: stringOutput('图像通道'),
+    description: '查看图像生成通道的配置与健康状态（密钥一律脱敏）；test=连通性自检，probe=完整探测（模型枚举 + 鉴权 + 端点风格，可选小额实跑）。',
     parameters: {
       type: 'object',
       properties: {
-        action: { type: 'string', enum: ['list', 'test'], description: 'list=总览（默认）；test=自检指定通道' },
-        id: { type: 'string', description: 'test 时的通道 id；缺省用默认通道' },
+        action: { type: 'string', enum: ['list', 'test', 'probe'], description: 'list=总览（默认）；test=健康；probe=探测' },
+        id: { type: 'string', description: '通道 id；缺省用默认通道' },
+        realRun: { type: 'boolean', description: 'probe 时是否做一次小额真实生成（会产生费用）' },
       },
       additionalProperties: false,
     },
     execute: async (args) => {
       const action = typeof args['action'] === 'string' ? args['action'] : 'list'
-      if (action === 'test') {
-        const id = typeof args['id'] === 'string' && args['id'] !== '' ? args['id'] : runtime.vault.settings().defaultChannelId
+      const id = typeof args['id'] === 'string' && args['id'] !== '' ? args['id'] : runtime.vault.settings().defaultChannelId
+      if (action === 'test' || action === 'probe') {
         const channel = runtime.vault.find(id)
         if (channel === undefined) return '找不到通道 ' + id + '。先用 img_channels action=list 查看已配置的通道。'
-        const health = await runtime.providerFor(channel).health(channel)
+        const provider = runtime.providerFor(channel)
+        if (action === 'probe' && provider.probe !== undefined) {
+          const result = await provider.probe(channel, { realRun: args['realRun'] === true })
+          return [
+            '通道 ' + channel.id + '（' + channel.label + '）探测' + (result.ok ? '通过' : '未通过'),
+            '鉴权：' + result.auth + '，端点风格：' + result.endpointStyle + '，尺寸风格：' + result.sizeStyle,
+            '模型数：' + String(result.models.length) + (result.models.length === 0 ? '' : '（' + result.models.slice(0, 12).join(', ') + '）'),
+            '结论：' + result.detail,
+            result.realRun === undefined ? '小额实跑：未执行' : '小额实跑：' + (result.realRun.ok ? '成功' : '失败') + ' — ' + result.realRun.note,
+          ].join(String.fromCharCode(10))
+        }
+        const health = await provider.health(channel)
         return [
           '通道 ' + channel.id + '（' + channel.label + '）自检' + (health.ok ? '通过' : '失败'),
           '类型：' + channel.kind + '，尺寸风格：' + health.sizeStyle,
           '可用模型：' + health.models.join(', '),
           '结论：' + health.detail,
-        ].join('\n')
+        ].join(String.fromCharCode(10))
       }
       const settings = runtime.vault.settings()
       const channels = runtime.vault.publicList()
       const summary = summarizeSpend(readSpend(runtime.home))
+      const cacheStats = runtime.cache.stats()
       const lines = [
         '通道数：' + String(channels.length) + '（默认：' + (settings.defaultChannelId === '' ? '未设置' : settings.defaultChannelId) + '）',
       ]
       for (const channel of channels) {
         lines.push(
-          '- ' + channel.id + ' | ' + channel.label + ' | ' + channel.kind + ' | key=' + (channel.apiKey === '' ? '（未配置）' : channel.apiKey) + ' | 模型=' + (channel.models.join(', ') || '（未声明）') + ' | ' + (channel.enabled ? '启用' : '停用'),
+          '- ' + channel.id + ' | ' + channel.kind + ' | key=' + (channel.apiKey === '' ? '（未配置）' : channel.apiKey) + ' | 模型=' + (channel.models.join(', ') || '（未声明）') + ' | 尺寸风格=' + runtime.sizeStyleFor(channel) + ' | ' + (channel.enabled ? '启用' : '停用'),
         )
       }
       lines.push('默认模型：' + (settings.defaultModel === '' ? '（未设置）' : settings.defaultModel))
       lines.push('默认尺寸：' + settings.defaultAspectRatio + ' / ' + settings.defaultResolution + ' / ' + settings.defaultFormat)
       lines.push('累计消耗：' + String(summary.total) + ' ' + summary.currency + '（' + String(summary.images) + ' 张 / ' + String(summary.entries) + ' 次）')
-      return lines.join('\n')
+      lines.push('缓存：' + String(cacheStats.entries) + ' 条，命中 ' + String(cacheStats.hits) + ' 次')
+      return lines.join(String.fromCharCode(10))
     },
   }
 }
@@ -125,8 +160,8 @@ function libraryTool(): ToolDefinition {
     execute: async (args) => {
       const locale = typeof args['locale'] === 'string' ? args['locale'] : 'zh'
       const need = {
-        query: typeof args['query'] === 'string' ? args['query'] : undefined,
-        category: typeof args['category'] === 'string' ? args['category'] : undefined,
+        query: str(args['query']),
+        category: str(args['category']),
         styles: stringList(args['styles']),
         scenes: stringList(args['scenes']),
         tags: stringList(args['tags']),
@@ -157,7 +192,68 @@ function libraryTool(): ToolDefinition {
           lines.push('  - ' + candidate.id + '：' + candidate.title + '（分数 ' + String(candidate.score) + '，' + candidate.matched.join('; ') + '）')
         }
       }
-      return lines.join('\n')
+      return lines.join(String.fromCharCode(10))
+    },
+  }
+}
+
+function promptParam(): Record<string, unknown> {
+  return {
+    type: 'object',
+    description: 'ImagePrompt v1 对象（schemaVersion/intent/subject/...），或 { text: "自然语言" } 的简写',
+  }
+}
+
+function composeTool(runtime: PluginRuntime): ToolDefinition {
+  return {
+    name: 'img_compose',
+    output: stringOutput('提示词编译预览'),
+    description: '只编译不生成：把 ImagePrompt v1 编译成最终提示词 + 负面清单 + 通道尺寸字段，供人工或模型先审阅（零成本）。可在生成前用它校验契约、发现缺字段。',
+    parameters: {
+      type: 'object',
+      properties: {
+        prompt: promptParam(),
+        templateId: { type: 'string', description: '套用某个样式库模板：自动并入该模板的避坑指南' },
+        channelId: { type: 'string', description: '按该通道的尺寸风格编译；缺省用默认通道' },
+        locale: { type: 'string', enum: ['zh', 'en'], description: '模板文案语言，默认 zh' },
+        sizeStyle: { type: 'string', enum: ['pixels', 'ratio-resolution', 'ignore'], description: '显式指定尺寸风格（覆盖通道推断）' },
+      },
+      required: ['prompt'],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      const settings = runtime.vault.settings()
+      const channel = runtime.vault.find(str(args['channelId']) ?? settings.defaultChannelId)
+      const sizeStyle = args['sizeStyle'] === 'pixels' || args['sizeStyle'] === 'ratio-resolution' || args['sizeStyle'] === 'ignore'
+        ? args['sizeStyle']
+        : channel === undefined ? 'ratio-resolution' : runtime.sizeStyleFor(channel)
+      const templateId = str(args['templateId'])
+      const locale = typeof args['locale'] === 'string' ? args['locale'] : 'zh'
+      let pitfalls: string[] | undefined
+      if (templateId !== undefined) {
+        const template = library().templates.find((item) => item.id === templateId)
+        if (template === undefined) return '样式库里没有模板 ' + templateId + '。用 img_library 检索可用模板。'
+        pitfalls = locale === 'en' ? (template.pitfalls.en ?? template.pitfalls.zh ?? []) : (template.pitfalls.zh ?? template.pitfalls.en ?? [])
+      }
+      const composed = composePrompt({
+        prompt: args['prompt'],
+        templatePitfalls: pitfalls,
+        globalNegative: settings.globalNegative,
+        sizeStyle,
+      })
+      const lines: string[] = []
+      if (templateId !== undefined) lines.push('模板：' + templateId)
+      lines.push('尺寸风格：' + sizeStyle + '，请求字段：' + JSON.stringify(composed.size))
+      lines.push('')
+      lines.push('=== 最终提示词 ===')
+      lines.push(composed.prompt)
+      lines.push('')
+      lines.push('=== 负面清单 ===')
+      lines.push(composed.negative === '' ? '（空）' : composed.negative)
+      lines.push('')
+      lines.push('分段顺序：' + composed.sections.map((section) => section.split(':')[0]).join(' -> '))
+      for (const warning of composed.warnings) lines.push('提示：' + warning)
+      return lines.join(String.fromCharCode(10))
     },
   }
 }
@@ -166,85 +262,136 @@ function generateTool(runtime: PluginRuntime): ToolDefinition {
   return {
     name: 'img_generate',
     output: stringOutput('图像生成'),
-    description: '按 ImagePrompt v1 契约生成图像：编译提示词与负面清单 -> 走已配置通道 -> 落盘 -> 记账，返回产物路径。',
+    description: '按 ImagePrompt v1 契约生成图像：编译提示词与负面清单 -> 成本护栏 -> 缓存 -> 走已配置通道 -> 落盘 -> 记账。超预算或未知价时会先返回确认请求，带 confirm=true 重调即可。',
     parameters: {
       type: 'object',
       properties: {
-        prompt: {
-          type: 'object',
-          description: 'ImagePrompt v1 对象（schemaVersion/intent/subject/...），或 { text: "自然语言" } 的简写',
-        },
+        prompt: promptParam(),
+        templateId: { type: 'string', description: '套用样式库模板（自动并入避坑指南）' },
         channelId: { type: 'string', description: '通道 id；缺省用默认通道' },
-        model: { type: 'string', description: '模型名；缺省用默认模型' },
+        model: { type: 'string', description: '模型名；缺省用默认模型或通道声明的第一个' },
+        count: { type: 'number', description: '张数 1-4，缺省用设置里的默认值' },
+        seed: { type: 'number', description: '随机种子（通道/模型支持时生效）' },
         outputDir: { type: 'string', description: '产物目录；缺省 <插件数据目录>/outputs' },
+        confirm: { type: 'boolean', description: '已确认成本时置 true' },
+        useCache: { type: 'boolean', description: 'false 强制重新生成' },
+        referenceImages: { type: 'array', items: { type: 'string' }, description: '参考图本地路径（跨页一致性）' },
       },
       required: ['prompt'],
       additionalProperties: false,
     },
     execute: async (args) => {
+      const templateId = str(args['templateId'])
+      let pitfalls: string[] | undefined
+      if (templateId !== undefined) {
+        const template = library().templates.find((item) => item.id === templateId)
+        pitfalls = template === undefined ? undefined : (template.pitfalls.zh ?? template.pitfalls.en ?? [])
+      }
+      const input: GenerationInput = {
+        prompt: args['prompt'],
+        channelId: str(args['channelId']),
+        model: str(args['model']),
+        outputDir: str(args['outputDir']),
+        count: num(args['count']),
+        seed: num(args['seed']),
+        confirm: args['confirm'] === true,
+        useCache: args['useCache'] === false ? false : undefined,
+        templatePitfalls: pitfalls,
+        referenceImages: stringList(args['referenceImages']),
+      }
+      return describeOutcome(await runGeneration(runtime, input))
+    },
+  }
+}
+
+function batchTool(runtime: PluginRuntime): ToolDefinition {
+  return {
+    name: 'img_batch',
+    output: stringOutput('批量生成'),
+    description: '批量生成（漫画逐页 / 多变体）：逐项独立编译与记账，受限并发、失败不拖垮整批、缓存命中即跳过。整批预估超预算或存在未知价时，先返回确认请求。',
+    parameters: {
+      type: 'object',
+      properties: {
+        items: {
+          type: 'array',
+          description: '每项 = { prompt, templateId?, channelId?, model?, count?, seed?, outputDir?, fileStem? }',
+          items: { type: 'object' },
+        },
+        concurrency: { type: 'number', description: '并发 1-8，缺省用设置值' },
+        confirm: { type: 'boolean', description: '已确认总成本时置 true' },
+        onlyPending: { type: 'boolean', description: 'true 时跳过已存在产物的项（断点续跑）' },
+      },
+      required: ['items'],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      const rawItems = Array.isArray(args['items']) ? args['items'] : []
+      if (rawItems.length === 0) return 'items 为空：每项至少要有 prompt。'
+      if (rawItems.length > 40) return '单次批量最多 40 项（当前 ' + String(rawItems.length) + '）：请分批以保证可恢复。'
       const settings = runtime.vault.settings()
-      const channelId = typeof args['channelId'] === 'string' && args['channelId'] !== ''
-        ? args['channelId']
-        : settings.defaultChannelId
-      const channel = runtime.vault.find(channelId)
-      if (channel === undefined) {
-        return '尚未配置可用的图像通道。请在插件设置页的「视觉模型」里添加一个通道（mock 通道可零密钥先跑通全链路）。'
+      const cacheDir = join(runtime.home, 'outputs')
+      const items: GenerationInput[] = []
+      for (const raw of rawItems) {
+        const item = typeof raw === 'object' && raw !== null && !Array.isArray(raw) ? (raw as Record<string, unknown>) : {}
+        if (item['prompt'] === undefined) return 'items 里存在缺少 prompt 的项。'
+        items.push({
+          prompt: item['prompt'],
+          channelId: str(item['channelId']),
+          model: str(item['model']),
+          outputDir: str(item['outputDir']) ?? cacheDir,
+          fileStem: str(item['fileStem']),
+          count: num(item['count']),
+          seed: num(item['seed']),
+          confirm: args['confirm'] === true,
+          templatePitfalls: undefined,
+        })
       }
-      const raw = args['prompt']
-      const promptInput = typeof raw === 'object' && raw !== null && !Array.isArray(raw) && typeof (raw as Record<string, unknown>)['text'] === 'string'
-        ? { schemaVersion: 1, intent: 'single-image', subject: String((raw as Record<string, unknown>)['text']) }
-        : raw
-      const composed = composePrompt({
-        prompt: promptInput,
-        globalNegative: settings.globalNegative,
-        sizeStyle: channel.sizeStyle,
-      })
-      const subjectMissing = composed.prompt.startsWith('SUBJECT: .')
-        || composed.warnings.some((warning) => warning.includes('subject'))
-      if (subjectMissing) {
-        return '提示词缺少 subject（必填）。校验信息：' + composed.warnings.join('；')
+
+      // 先做一遍成本预检：整批里任何一项需要确认就整体先确认（避免跑一半停下）
+      if (args['confirm'] !== true) {
+        // dryRun：预检绝不能真的生成（否则预检就把钱花了，这是联调时抓到的真实缺陷）
+        const probes = await runBatch(runtime, items.map((item) => ({ ...item, confirm: false, dryRun: true })), 1)
+        const blocked = probes.filter((outcome) => outcome.kind === 'confirm-required')
+        const failed = probes.filter((outcome) => outcome.kind === 'error')
+        if (failed.length === probes.length) {
+          return '整批均无法执行：' + (failed[0]?.message ?? '未知错误')
+        }
+        if (blocked.length > 0) {
+          const total = probes.reduce((sum, outcome) => sum + outcome.quote.amount, 0)
+          return [
+            '整批需要先确认成本：' + String(blocked.length) + ' / ' + String(probes.length) + ' 项超阈值或未知价，合计约 ' + String(Math.round(total * 10000) / 10000) + ' CNY。',
+            '确认后请带 confirm=true 重新调用（已确认的项会自动命中缓存，不会重复计费）。',
+          ].join(String.fromCharCode(10))
+        }
       }
-      const outputDir = typeof args['outputDir'] === 'string' && args['outputDir'] !== ''
-        ? args['outputDir']
-        : join(runtime.home, 'outputs')
-      mkdirSync(outputDir, { recursive: true, mode: 0o700 })
-      const started = Date.now()
-      const result = await runtime.providerFor(channel).generate(channel, {
-        channelId: channel.id,
-        model: typeof args['model'] === 'string' && args['model'] !== '' ? args['model'] : settings.defaultModel,
-        prompt: composed.prompt,
-        negative: composed.negative,
-        size: composed.size.size,
-        resolution: composed.size.resolution,
-        count: settings.defaultCount,
-        outputDir,
-        fileStem: 'img-' + String(started),
-      })
-      appendSpend(runtime.home, {
-        at: new Date().toISOString(),
-        channelId: channel.id,
-        model: result.model,
-        count: result.images.length,
-        amount: result.quote.amount,
-        currency: result.quote.currency,
-        confidence: result.quote.confidence,
-        promptChars: composed.prompt.length,
-        durationMs: Date.now() - started,
-      })
+
+      const results = await runBatch(runtime, items, num(args['concurrency']) ?? settings.concurrency)
+      const generated = results.filter((outcome) => outcome.kind === 'generated').length
+      const cached = results.filter((outcome) => outcome.kind === 'cached').length
+      const errors = results.filter((outcome) => outcome.kind === 'error')
       const lines = [
-        '已通过通道 ' + channel.id + '（' + channel.kind + '）生成 ' + String(result.images.length) + ' 张图，耗时 ' + String(result.durationMs) + 'ms',
+        '批量完成：新生成 ' + String(generated) + '，缓存命中 ' + String(cached) + '，失败 ' + String(errors.length) + '（共 ' + String(results.length) + '）',
       ]
-      for (const image of result.images) {
-        lines.push('- ' + image.path + '（' + String(image.width ?? 0) + 'x' + String(image.height ?? 0) + '，' + String(image.bytes) + ' 字节）')
+      results.forEach((outcome, index) => {
+        const paths = outcome.images.map((image) => image.path).join(', ')
+        lines.push(String(index + 1) + '. [' + outcome.kind + '] ' + (paths === '' ? outcome.message : paths))
+      })
+      if (errors.length > 0) {
+        lines.push('失败项可用同样的 items 重跑（成功的项会命中缓存，不会重复付费）。')
       }
-      if (composed.negative !== '') lines.push('负面清单：' + composed.negative)
-      for (const warning of composed.warnings) lines.push('提示：' + warning)
-      lines.push('用 read_image 工具查看产物即可自评效果。')
-      return lines.join('\n')
+      return lines.join(String.fromCharCode(10))
     },
   }
 }
 
 export function createTools(runtime: PluginRuntime): ToolDefinition[] {
-  return [channelsTool(runtime), libraryTool(), generateTool(runtime)]
+  return [
+    channelsTool(runtime),
+    libraryTool(),
+    composeTool(runtime),
+    generateTool(runtime),
+    batchTool(runtime),
+  ]
 }
+
+void describeError

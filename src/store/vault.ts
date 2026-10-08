@@ -9,7 +9,7 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { CHANNEL_KINDS } from '../provider/types.ts'
-import type { ChannelKind, ChannelRecord, PublicChannel } from '../provider/types.ts'
+import type { ChannelKind, ChannelPricing, ChannelRecord, PublicChannel } from '../provider/types.ts'
 import { isSizeStyle } from '../prompt/sizes.ts'
 import { resolvePluginHome } from './home.ts'
 import { DEFAULT_SETTINGS, normalizeSettings } from './settings.ts'
@@ -101,6 +101,10 @@ export class Vault {
           apiKey: typeof item['apiKey'] === 'string' ? item['apiKey'] : '',
           models: Array.isArray(item['models']) ? item['models'].filter((model): model is string => typeof model === 'string') : [],
           ...(typeof item['endpointPath'] === 'string' ? { endpointPath: item['endpointPath'] } : {}),
+          ...(typeof item['statusPath'] === 'string' ? { statusPath: item['statusPath'] } : {}),
+          ...(isRecord(item['pricing']) ? { pricing: item['pricing'] as ChannelPricing } : {}),
+          ...(Number.isFinite(Number(item['timeoutMs'])) ? { timeoutMs: Number(item['timeoutMs']) } : {}),
+          ...(Number.isFinite(Number(item['retries'])) ? { retries: Number(item['retries']) } : {}),
           ...(isSizeStyle(item['sizeStyle']) ? { sizeStyle: item['sizeStyle'] } : {}),
           enabled: item['enabled'] !== false,
           createdAt: typeof item['createdAt'] === 'string' ? item['createdAt'] : new Date(0).toISOString(),
@@ -201,6 +205,45 @@ export class Vault {
       errors.push('sizeStyle 必须是 pixels | ratio-resolution | ignore')
     }
 
+    const statusPath = input['statusPath']
+    if (statusPath !== undefined && statusPath !== '') {
+      if (typeof statusPath !== 'string' || !statusPath.startsWith('/')) errors.push('statusPath 必须以 / 开头')
+    }
+
+    const pricing = input['pricing']
+    let normalizedPricing: ChannelPricing | undefined
+    if (pricing !== undefined && pricing !== null) {
+      if (!isRecord(pricing)) errors.push('pricing 必须是对象')
+      else {
+        normalizedPricing = {}
+        const currency = pricing['currency']
+        if (currency !== undefined) {
+          if (typeof currency !== 'string' || currency.length > 8) errors.push('pricing.currency 必须是短字符串')
+          else normalizedPricing.currency = currency
+        }
+        const priceKeys = ['1k', '2k', '4k', 'default'] as const
+        for (const key of priceKeys) {
+          const raw = pricing[key]
+          if (raw === undefined || raw === null || raw === '') continue
+          const parsed = Number(raw)
+          if (!Number.isFinite(parsed) || parsed < 0) errors.push('pricing.' + key + ' 必须是非负数字')
+          else normalizedPricing[key] = parsed
+        }
+      }
+    }
+
+    const timeoutMs = input['timeoutMs']
+    if (timeoutMs !== undefined && timeoutMs !== '' && timeoutMs !== null) {
+      const parsed = Number(timeoutMs)
+      if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 600000) errors.push('timeoutMs 必须在 1000..600000 之间')
+    }
+
+    const retries = input['retries']
+    if (retries !== undefined && retries !== '' && retries !== null) {
+      const parsed = Number(retries)
+      if (!Number.isInteger(parsed) || parsed < 0 || parsed > 10) errors.push('retries 必须在 0..10 之间')
+    }
+
     if (errors.length > 0) return { ok: false, errors }
 
     const now = new Date().toISOString()
@@ -218,6 +261,10 @@ export class Vault {
     }
     if (typeof endpointPath === 'string' && endpointPath !== '') record.endpointPath = endpointPath
     if (isSizeStyle(sizeStyle)) record.sizeStyle = sizeStyle
+    if (typeof statusPath === 'string' && statusPath !== '') record.statusPath = statusPath
+    if (normalizedPricing !== undefined) record.pricing = normalizedPricing
+    if (timeoutMs !== undefined && timeoutMs !== '' && timeoutMs !== null) record.timeoutMs = Number(timeoutMs)
+    if (retries !== undefined && retries !== '' && retries !== null) record.retries = Number(retries)
 
     if (existing === undefined) this.data.channels.push(record)
     else this.data.channels[this.data.channels.indexOf(existing)] = record

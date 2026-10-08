@@ -155,7 +155,7 @@ test('真实 HTTP 往返：回环 Host 可访问 /health 与写接口', async ()
 test('工具面：注册三个 img_* 工具且输出可读', async () => {
   await withRuntime(async (runtime) => {
     const tools = createTools(runtime)
-    assert.deepEqual(tools.map((tool) => tool.name), ['img_channels', 'img_library', 'img_generate'])
+    assert.deepEqual(tools.map((tool) => tool.name), ['img_channels', 'img_library', 'img_compose', 'img_generate', 'img_batch'])
     runtime.vault.upsert({ id: 'mock', label: '本地 mock', kind: 'mock' })
     const listOutput = await tools[0]!.execute({ action: 'list' })
     assert.ok(listOutput.includes('通道数：1'))
@@ -164,10 +164,15 @@ test('工具面：注册三个 img_* 工具且输出可读', async () => {
     assert.ok(testOutput.includes('自检通过'))
     const libraryOutput = await tools[1]!.execute({ query: 'infographic timeline', limit: 3 })
     assert.ok(libraryOutput.includes('infographic-engine'))
-    const generateOutput = await tools[2]!.execute({ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'tool mug' } })
+    const composeOutput = await tools[2]!.execute({ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'tool mug' } })
+    assert.ok(composeOutput.includes('=== 最终提示词 ==='))
+    assert.ok(composeOutput.includes('SUBJECT: tool mug'))
+    const generateOutput = await tools[3]!.execute({ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'tool mug' } })
     assert.ok(generateOutput.includes('已通过通道 mock'))
-    const missingSubject = await tools[2]!.execute({ prompt: { text: '' } })
+    const missingSubject = await tools[3]!.execute({ prompt: { text: '' } })
     assert.ok(missingSubject.includes('缺少 subject'))
+    const batchOutput = await tools[4]!.execute({ items: [{ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'page one' } }, { prompt: { schemaVersion: 1, intent: 'single-image', subject: 'page two' } }], concurrency: 2 })
+    assert.ok(batchOutput.includes('批量完成：新生成 2'))
   })
 })
 
@@ -203,7 +208,7 @@ test('插件入口：双通道可加载，apply 注册路由与工具', () => {
     apply(ctx)
     assert.equal(effectCalls, 1)
     assert.deepEqual(routes, ['/dsh-kylin-images/health', API_PREFIX])
-    assert.deepEqual(toolNames, ['img_channels', 'img_library', 'img_generate'])
+    assert.deepEqual(toolNames, ['img_channels', 'img_library', 'img_compose', 'img_generate', 'img_batch'])
   } finally {
     if (previous === undefined) delete process.env['DSH_KYLIN_IMAGES_HOME']
     else process.env['DSH_KYLIN_IMAGES_HOME'] = previous

@@ -11,7 +11,7 @@ import { pixelSize } from '../prompt/sizes.ts'
 import type { SizeStyle } from '../prompt/sizes.ts'
 import { isAspectRatio } from '../prompt/vocab.ts'
 import { placeholderPng } from './png.ts'
-import type { ChannelRecord, GeneratedImage, GenerateRequest, GenerateResult, ImageProvider, ProviderHealth } from './types.ts'
+import type { ChannelRecord, GeneratedImage, GenerateRequest, GenerateResult, ImageProvider, ProbeResult, ProviderHealth } from './types.ts'
 
 const PIXEL_BY_SIZE: Record<string, { width: number; height: number }> = {}
 
@@ -51,6 +51,32 @@ export class MockProvider implements ImageProvider {
       models: channel.models.length > 0 ? channel.models : [MOCK_MODEL],
       sizeStyle: channel.sizeStyle ?? 'ratio-resolution',
     }
+  }
+
+  /** mock 也要实现 probe：否则「测试通道」在不同通道类型下行为不一致。 */
+  async probe(channel: ChannelRecord, options: { realRun?: boolean; http?: unknown; outputDir?: string } = {}): Promise<ProbeResult> {
+    const models = channel.models.length > 0 ? channel.models : [MOCK_MODEL]
+    const result: ProbeResult = {
+      ok: true,
+      auth: 'ok',
+      models,
+      endpointStyle: 'sync-images',
+      sizeStyle: channel.sizeStyle ?? 'ratio-resolution',
+      detail: '本地 mock：不发起网络请求、不需要鉴权，按同步图像协议模拟',
+    }
+    if (options.realRun === true) {
+      const started = Date.now()
+      const generated = await this.generate(channel, {
+        channelId: channel.id,
+        model: models[0] ?? MOCK_MODEL,
+        prompt: 'probe: a small grey square on white background',
+        count: 1,
+        outputDir: options.outputDir ?? join(process.cwd(), '.scratch', 'probe'),
+        fileStem: 'probe-' + String(started),
+      })
+      result.realRun = { tried: true, ok: true, note: '占位图已生成：' + (generated.images[0]?.path ?? '') }
+    }
+    return result
   }
 
   async generate(channel: ChannelRecord, request: GenerateRequest): Promise<GenerateResult> {

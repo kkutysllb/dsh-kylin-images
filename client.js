@@ -52,6 +52,7 @@ window.__ModuleLoader__.load({
       budget: '确认阈值（元）',
       cache: '结果缓存',
       spend: '累计消耗',
+      realRun: '探测时小额实跑（会产生费用）',
       empty: '还没有配置任何通道。先加一个 mock 通道即可零密钥跑通全链路。',
       loading: '加载中…',
       failed: '操作失败，请稍后重试。',
@@ -87,6 +88,7 @@ window.__ModuleLoader__.load({
       budget: 'Confirm threshold (CNY)',
       cache: 'Result cache',
       spend: 'Accumulated spend',
+      realRun: 'Run one small real generation while probing (costs money)',
       empty: 'No channel configured yet. Add a mock channel to exercise the whole chain with zero keys.',
       loading: 'Loading…',
       failed: 'The operation failed, please retry shortly.',
@@ -154,6 +156,9 @@ window.__ModuleLoader__.load({
       var noticeHook = React.useState(null);
       var notice = noticeHook[0];
       var setNotice = noticeHook[1];
+      var realRunHook = React.useState(false);
+      var realRun = realRunHook[0];
+      var setRealRun = realRunHook[1];
       var draftHook = React.useState({ label: '', kind: 'mock', baseUrl: '', apiKey: '', models: '', sizeStyle: 'ratio-resolution' });
       var draft = draftHook[0];
       var setDraft = draftHook[1];
@@ -202,6 +207,7 @@ window.__ModuleLoader__.load({
 
       var settings = snapshot.settings || {};
       var spend = snapshot.spend || { total: 0, currency: 'CNY', images: 0, entries: 0 };
+      var cache = snapshot.cache || null;
 
       function updateSetting(field, value) {
         var patch = {};
@@ -226,10 +232,16 @@ window.__ModuleLoader__.load({
                     type: 'button', disabled: busy,
                     onClick: function () {
                       setBusy(true);
-                      request('channels.test', { id: channel.id }).then(function (payload) {
+                      request('channels.probe', { id: channel.id, realRun: realRun }).then(function (payload) {
                         setBusy(false);
                         var value = payload && payload.value;
-                        setNotice({ kind: payload && payload.ok ? 'ok' : 'error', text: value ? (channel.id + ': ' + value.detail) : t('failed') });
+                        if (value) {
+                          var summary = channel.id + ': 鉴权=' + (value.auth || 'unknown') + ' · 端点=' + (value.endpointStyle || '-') + ' · 模型 ' + ((value.models || []).length) + ' 个';
+                          if (value.realRun) summary += ' · 实跑' + (value.realRun.ok ? '成功' : '失败');
+                          setNotice({ kind: payload && payload.ok ? 'ok' : 'error', text: summary + ' — ' + (value.detail || '') });
+                        } else {
+                          setNotice({ kind: 'error', text: t('failed') });
+                        }
                       }, function () { setBusy(false); setNotice({ kind: 'error', text: t('failed') }); });
                     },
                   }, busy ? t('testing') : t('test')),
@@ -272,7 +284,14 @@ window.__ModuleLoader__.load({
             select('cacheEnabled', t('cache'), String(settings.cacheEnabled), ['true', 'false'], function (value) { updateSetting('cacheEnabled', value === 'true'); }))),
 
         React.createElement('p', { className: 'kimg-state' },
-          t('spend') + ': ' + spend.total + ' ' + spend.currency + ' · ' + spend.images + ' / ' + spend.entries));
+          t('spend') + ': ' + spend.total + ' ' + spend.currency + ' · ' + spend.images + ' / ' + spend.entries,
+          cache === null ? null : ' · ' + t('cache') + ': ' + cache.entries + ' / ' + cache.hits,
+          React.createElement('label', { style: { marginLeft: '12px' } },
+            React.createElement('input', {
+              type: 'checkbox',
+              checked: realRun,
+              onChange: function (event) { setRealRun(event.target.checked); },
+            }), ' ' + t('realRun'))));
     }
 
     function field(name, label, value, onChange, type) {

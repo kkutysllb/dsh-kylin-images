@@ -3,15 +3,15 @@
 麒麟（QiLin / Kylin）与 DSH **双通道**的图像创作插件：把 awesome-gpt-image-2 的 Prompt-as-Code 样式库
 与 KSkills 的图像 / 知识漫画技能，接到一个本地可执行的生成层上，并带一个专用的**「视觉模型」配置菜单**。
 
-**状态：M1 完成**（知识数据 + 编译器 + 宿主接入 + mock 零密钥全链路 + 视觉模型配置卡），
-已在**真机 dsh 宿主**上端到端验证；74 项单测全绿、strict 类型检查零错误。M2 起接真实通道。
+**状态：M2 完成** —— 知识数据 + 编译器 + 宿主接入 + 视觉模型菜单 + **真实通道（同步 / 异步）** + 通道探测
++ 成本护栏 + 结果缓存 + 批量生成。109 项单测全绿、strict 类型检查零错误，并在**真机 dsh 宿主**上端到端验证。
 
 ## 一句话定位
 
 **上游有知识没有执行器，KSkills 有流程没有编译器，我们做编译器和执行器。**
 
-知识层（541 案例 + 22 模板的结构化检索）→ 编译器（ImagePrompt v1 → 通道请求；pitfalls 有了约束段出口、
-角色表有了强制注入点、尺寸按通道 sizeStyle 三形态落地）→ 执行层（用户自配通道，落盘 + 记账 + 组装）。
+知识层（541 案例 + 22 模板的结构化检索）→ 编译器（ImagePrompt v1 → 通道请求；pitfalls 进约束段、
+角色表逐字注入、尺寸按通道 sizeStyle 三形态落地）→ 执行层（用户自配通道，探测 → 查价 → 确认 → 生成 → 落盘 → 记账 → 缓存）。
 
 ## 两条硬要求（贯穿全部里程碑）
 
@@ -20,8 +20,39 @@
 供 DSH 从活动 fiber 推导 + `settings.installSection` 供 QiLin 注册）。差异表见设计规格 §4.1。
 
 **R2 专用「视觉模型」配置菜单**：通道是「怎么连」，视觉模型是「用什么画、画成什么样」。
-卡片同时占用 `plugins.bundle.config`（主座席）与 `settings.section`（兜底），自带样式表（跟随 `--dsw-alias-*` 令牌）。
+卡片同时占用 `plugins.bundle.config`（主座席）与 `settings.section`（兜底），自带样式表；
+包含通道与模型、生成默认值、全局负面词、成本阈值与缓存、**测试通道（探测 + 可选小额实跑）**、累计消耗与缓存命中。
 **凭据不进宿主设置**：非敏感字段走插件 API，API Key 只存在于 `0600` vault，界面永远只显示脱敏串。
+
+## 通道类型
+
+| kind | 协议 | 适用 |
+|---|---|---|
+| `mock` | 本地占位图，零密钥零网络 | 首次上手、CI、全链路自检 |
+| `openai-images` | 同步：`POST {base}/v1/images/generations`，回 `b64_json` 或 `url` | OpenAI 官方与多数兼容端点 |
+| `task-images` | 异步：提交 → `task_id` → 轮询（`/v1/tasks/{id}`，可覆盖）→ 签名 URL | 聚合站（Apimart 形态等） |
+
+尺寸风格三形态自动适配：`pixels`（1024x1536）/ `ratio-resolution`（`1:1` + `1k`）/ `ignore`（模型自决）。
+**签名 URL 一律立刻下载落盘**（上游 URL 带 `expires_at`）。
+
+## 成本护栏与缓存
+
+- 三层查价：**通道覆盖 > 内置模型目录 > unknown**；未知价一律先确认（可关）；超过阈值（默认 ¥1）先确认；每笔记账。
+- 确认语义：工具/接口返回确认请求，模型带 `confirm=true` 重调；批量在**预检阶段只报价不生成**（dryRun），不会重复烧钱。
+- 结果缓存：内容哈希（通道×模型×提示词×负面×尺寸×分辨率×张数×种子）命中即复用，命中时把文件复制到本次产物目录；
+  漫画重渲染只补失败页；`useCache:false` 强制重跑；`cache.prune/clear` 可管理。
+
+## 工具面
+
+| 工具 | 作用 |
+|---|---|
+| `img_channels` | 通道总览（密钥脱敏）/ `test` 健康 / `probe` 探测（模型枚举 + 鉴权 + 端点风格 + 可选小额实跑） |
+| `img_library` | 样式库与案例检索（模板 / 风格 / 场景 / 标签 / 关键词），可返回模板候选与推荐理由 |
+| `img_compose` | **只编译不生成**：预览最终提示词 / 负面清单 / 通道尺寸字段（零成本，生成前先审阅） |
+| `img_generate` | ImagePrompt v1 → 编译 → 成本护栏 → 缓存 → 生成 → 落盘 → 记账 |
+| `img_batch` | 批量（漫画逐页 / 多变体）：受限并发、逐项记账、失败不拖垮整批、命中缓存即跳过、可断点续跑 |
+
+`img_comic`（知识漫画管线）在 M3 交付。
 
 ## 安装（DSH）
 
@@ -33,25 +64,16 @@
     # 装进正在用的 profile
     dsh plugin --profile web add /path/to/dsh-kylin-images
 
-麒麟引擎同理（`qilin plugin --profile qilin add …`）。装好后在插件详情页打开「视觉模型」，先加一个
-`mock` 通道即可**零密钥**跑通全链路；再填 Base URL / API Key / 模型清单换成真实通道（M2 起支持真实调用）。
-
-## 工具面
-
-| 工具 | 作用 |
-|---|---|
-| `img_channels` | 通道配置与健康总览（密钥脱敏）/ 单通道自检 |
-| `img_library` | 样式库与案例检索（模板 / 风格 / 场景 / 标签 / 关键词），可返回模板候选与推荐理由 |
-| `img_generate` | ImagePrompt v1 → 编译（含负面清单）→ 走通道 → 落盘 → 记账，返回产物路径 |
-
-`img_compose` / `img_batch` / `img_comic` 在 M2 / M3 交付；compose 与 generate 目前已可经 JSON API 调用。
+麒麟引擎同理（`qilin plugin --profile qilin add …`）。装好后在插件详情页打开「视觉模型」：
+先加 `mock` 通道零密钥跑通全链路，再填 Base URL / API Key / 模型清单并用「测试通道」探测；
+真实通道上线前建议先 `probe`（不实跑）确认鉴权与端点风格，再决定是否小额实跑。
 
 ## 快速开始（开发）
 
     npm install
-    npm test              # 74 项：纯函数 + 存储 + 路由 + mock 全链路 + 客户端产物
+    npm test              # 109 项：纯函数 + 存储 + 协议适配器 + 路由 + 客户端产物
     npm run typecheck     # tsc strict，零错误
-    npm run build         # tsc -> lib/（宿主入口）
+    npm run build         # tsc -> lib/（宿主入口；git 安装由 prepare 自动构建）
     npm run sync:check    # 上游数据对账（离线可跑）
 
 ## 目录
@@ -60,13 +82,13 @@
     src/prompt/    编译器：vocab / sizes / schema / negatives / compose / match
     src/library/   知识层：i18n / store（载入 + 索引 + 检索）
     src/comic/     漫画视觉选型 select.ts（P0-P10）
-    src/provider/  通道层：types / mock / png（零依赖 PNG 编码器）
-    src/store/     home / vault（凭据 0600 + 全出口脱敏）/ settings / spend
-    src/host/      config-schema（Standard Schema）/ registry / routes（fenced JSON API）
-    src/tools/     img_channels / img_library / img_generate
+    src/provider/  通道层：types / errors / http / catalog / pricing / mock / png / openai-images / task-images
+    src/store/     home / vault（凭据 0600 + 全出口脱敏）/ settings / spend / cache
+    src/host/      config-schema（Standard Schema）/ registry / routes（fenced JSON API）/ generate（生成编排）
+    src/tools/     img_channels / img_library / img_compose / img_generate / img_batch
     client.js      「视觉模型」配置卡（双座席自注册，零构建产物）
     docs/          上游分析、设计规格、验收证据
-    plans/         实施计划与 M0/M1 验收记录
+    plans/         实施计划与 M0/M1/M2 验收记录
 
 ## 文档
 
@@ -74,8 +96,7 @@
 |---|---|
 | [上游分析](docs/analysis/2026-10-08-awesome-gpt-image-2-analysis.md) | 资产盘点、数据模型、生成契约、缺口、许可与风险 |
 | [设计规格](docs/superpowers/specs/2026-10-08-dsh-kylin-images-design.md) | 双通道契约（§4.1）、ImagePrompt v1（§5）、通道层（§7）、工具面（§8）、漫画管线（§9）、视觉模型菜单（§11.3）、里程碑（§14） |
-| [M0 计划](plans/2026-10-08-m0-knowledge-and-compiler.md) · [M0 验收](plans/2026-10-08-m0-verification.md) | 知识与编译器层 |
-| [M1 验收](plans/2026-10-08-m1-verification.md) | 宿主接入与视觉模型菜单；含真机 boot 抓到的两个真实缺陷与修复 |
+| [M0 验收](plans/2026-10-08-m0-verification.md) · [M1 验收](plans/2026-10-08-m1-verification.md) · [M2 验收](plans/2026-10-08-m2-verification.md) | 逐里程碑的证据与缺陷记录 |
 
 ## 上游与许可
 

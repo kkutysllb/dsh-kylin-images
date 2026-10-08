@@ -5,9 +5,18 @@
  * M1 只实现 mock 通道；openai-images 与 task-images 适配器在 M2。
  */
 import type { SizeStyle } from '../prompt/sizes.ts'
+import type { HttpOptions } from './http.ts'
 
 export const CHANNEL_KINDS = ['mock', 'openai-images', 'task-images'] as const
 export type ChannelKind = (typeof CHANNEL_KINDS)[number]
+
+export interface ChannelPricing {
+  currency?: string
+  '1k'?: number
+  '2k'?: number
+  '4k'?: number
+  default?: number
+}
 
 export interface ChannelRecord {
   id: string
@@ -18,6 +27,13 @@ export interface ChannelRecord {
   models: string[]
   /** 端点路径覆盖（聚合站路径千奇百怪，允许用户改）。 */
   endpointPath?: string
+  /** 异步任务查询路径模板，{id} 为占位符；缺省 /v1/tasks/{id}。 */
+  statusPath?: string
+  /** 通道级价目覆盖（优先于内置目录）。 */
+  pricing?: ChannelPricing
+  /** 该通道的请求超时与重试次数。 */
+  timeoutMs?: number
+  retries?: number
   sizeStyle?: SizeStyle
   enabled: boolean
   createdAt: string
@@ -40,8 +56,12 @@ export interface GenerateRequest {
   /** 单次生成的图片数量（MVP 上限 4）。 */
   count?: number | undefined
   seed?: number | undefined
+  /** 参考图本地路径（跨页一致性用；仅在通道能力允许时注入）。 */
+  referenceImages?: string[] | undefined
   outputDir: string
   fileStem: string
+  /** 测试注入点：替换 fetch / sleep / 轮询节奏。 */
+  http?: HttpOptions | undefined
 }
 
 export interface GeneratedImage {
@@ -63,6 +83,10 @@ export interface GenerateResult {
   channelId: string
   model: string
   durationMs: number
+  /** 通道实际返回的尺寸（部分模型忽略请求尺寸）。 */
+  actualSize?: string | undefined
+  /** 上游原始响应（诊断用，不落盘）。 */
+  raw?: unknown
 }
 
 export interface ProviderHealth {
@@ -72,8 +96,22 @@ export interface ProviderHealth {
   sizeStyle: SizeStyle
 }
 
+export interface ProbeResult {
+  ok: boolean
+  /** 鉴权结论：ok / invalid / unknown（部分中转不校验 /models 的 token）。 */
+  auth: 'ok' | 'invalid' | 'unknown'
+  models: string[]
+  endpointStyle: 'sync-images' | 'task-images'
+  sizeStyle: SizeStyle
+  /** 小额实跑结论（未跑时为 undefined）。 */
+  realRun?: { tried: boolean; ok: boolean; note: string } | undefined
+  detail: string
+}
+
 export interface ImageProvider {
   readonly kind: ChannelKind
-  health(channel: ChannelRecord): Promise<ProviderHealth>
+  health(channel: ChannelRecord, http?: HttpOptions): Promise<ProviderHealth>
   generate(channel: ChannelRecord, request: GenerateRequest): Promise<GenerateResult>
+  /** 通道探测：模型枚举 + 鉴权 + 端点风格 + 可选小额实跑。 */
+  probe?(channel: ChannelRecord, options?: { realRun?: boolean; http?: HttpOptions; outputDir?: string }): Promise<ProbeResult>
 }
