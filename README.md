@@ -21,7 +21,7 @@ cordis.patch.yml 与 client.js；设置表单一处 schema 两处用（Standard 
 + settings.installSection 供 QiLin 注册）。差异表见设计规格 §4.1。
 
 **R2 专用「视觉模型」配置菜单**：通道是「怎么连」，视觉模型是「用什么画、画成什么样」。
-卡片占用 plugins.bundle.config（主座席）与 settings.section（兜底），自带样式表；
+**入口在设置页面**：以 settings.section 注册「视觉模型」设置页菜单（主入口），并在插件详情页提供同一份表单的配置卡；**不占用 workspace 侧边栏**（配置属于设置页，不属于工作区侧栏）。自带样式表；
 含通道与模型、生成默认值、全局负面词、成本阈值与缓存、测试通道（探测 + 可选小额实跑）、累计消耗与缓存命中。
 **凭据不进宿主设置**：API Key 只存在于 0600 vault，界面永远只显示脱敏串。
 
@@ -100,7 +100,7 @@ cordis.patch.yml 与 client.js；设置表单一处 schema 两处用（Standard 
     src/host/      config-schema（Standard Schema）/ registry / routes（fenced API + 产物路由）/ generate（生成编排）
     src/tools/     六个 img_* 工具
     skills/        三个 runtime skill（随包分发，激活即注册）
-    client.js      「视觉模型」配置卡 + 侧边栏「图像工坊」（双座席自注册，零构建产物）
+    client.js      设置页菜单「视觉模型」+「图像工坊」+ 插件详情页配置卡（零构建产物）
     docs/          上游分析、设计规格、安装验证清单、验收证据
     plans/         逐里程碑的实施计划与验收记录
 

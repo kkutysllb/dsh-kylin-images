@@ -441,22 +441,33 @@ window.__ModuleLoader__.load({
       }
       if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return;
 
-      function bindSeat(seat, options, label) {
+      function bindSeat(seat, options, component, label) {
         try {
           ctx.slots.inject(seat, function () {
-            return ctx.slots.register(Object.assign({ name: seat, locale: 'kylinImages' }, options), VisionModelCard);
+            return ctx.slots.register(Object.assign({ name: seat, locale: 'kylinImages' }, options), component);
           });
         } catch (error) {
           console.warn('[dsh-kylin-images] 宿主缺少插槽 ' + seat + '，已跳过 ' + label + ':', error && error.message);
         }
       }
 
-      // 主面：插件详情页配置卡（QiLin 3.x / DSH 0.2.x）
-      bindSeat('plugins.bundle.config', { key: 'dsh-kylin-images' }, 'plugins.bundle.config');
-      // 兜底面：设置壳的动态分区（DSH 0.1.x 系）
-      bindSeat('settings.section', { id: SECTION_ID, order: 55, label: t('nav') }, 'settings.section');
-      // 侧边栏「图像工坊」：漫画项目与产物（软探测，缺座席时静默跳过）
-      bindSeat('sidebar.panellist', { id: WORKBENCH_ID, order: 55, label: t('workbench') }, 'sidebar.panellist');
+      // 主面：**设置页面**的「视觉模型」菜单（本插件的配置入口就在这里）。
+      // 不占用 workspace 侧边栏 —— 配置属于设置页，不属于工作区侧栏。
+      bindSeat('settings.section', {
+        id: SECTION_ID,
+        order: 20,
+        label: function () { return t('nav'); },
+      }, VisionModelCard, 'settings.section(视觉模型)');
+
+      // 同一设置页里的第二个菜单：知识漫画项目与产物。
+      bindSeat('settings.section', {
+        id: WORKBENCH_ID,
+        order: 21,
+        label: function () { return t('workbench'); },
+      }, ImageWorkbenchPanel, 'settings.section(图像工坊)');
+
+      // 插件详情页的配置卡（插件管理器页面），与设置页共用同一份表单。
+      bindSeat('plugins.bundle.config', { key: 'dsh-kylin-images' }, VisionModelCard, 'plugins.bundle.config');
     }
 
     exports.apply = apply;

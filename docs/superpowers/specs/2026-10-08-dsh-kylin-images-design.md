@@ -117,7 +117,7 @@ manifest 同时声明 dsh 与 qilin 两套键，指向**同一份** cordis.patch
 |---|---|---|---|
 | bundle 装配 | 读 dsh.bundle.patch | **只认 qilin.bundle.patch**（缺失报"没有声明组合包"） | 两键都写，同一文件 |
 | 设置表单来源 | 设置服务从活动 fiber 自带的 Config 导出**推导** | 设置服务**只认** settings.installSection 注册过的 | 宿主侧两条都做：导出 Config + dynamicInject 探测 settings.installSection（缺失静默跳过），一处 schema 两处用 |
-| 设置卡片座席 | settings.section 导航（0.1.x 系） | plugins.bundle.config 座席 + configForms 服务 | 主配置面走 plugins.bundle.config（两宿主都可渲染），导航项按 settings.section 可选追加 |
+| 设置卡片座席 | settings.section 导航（0.1.x 系） | plugins.bundle.config 座席 + configForms 服务 | **主配置面走 settings.section（设置页面菜单）**；插件详情页另挂同一份表单的 plugins.bundle.config 卡片；不占 workspace 侧边栏 |
 | 表单原语 | 宿主设置原语在 QiLin 已不存在 | 同左 | 卡片自带样式表（--dsw-alias-* / --dsw-radius-* + 字面量兜底），不依赖宿主表单组件 |
 | 兼容门 | peer 范围 >=0.1.0-rc.5 <1.0.0 \|\| >=3.0.0 <4.0.0 | 同左 | 全部 optional，防止 pnpm 把引擎树拉进用户 profile |
 
@@ -324,7 +324,7 @@ slug 规则与冲突处理沿用 KSkills 技能（kebab-case 2-4 关键词；已
 
 ### 11.3 专用「视觉模型」配置菜单（R2）
 
-这是插件的**主配置面**，标题「视觉模型」，占用本 bundle 的 plugins.bundle.config 座席（dsh 与 kylin 同一份代码）。它不是"通道管理"的别名：通道是**怎么连**，视觉模型是**用什么画、画成什么样**。
+这是插件的**主配置面**，标题「视觉模型」，以 settings.section 注册为**设置页面里的菜单项**（dsh 与 kylin 同一份代码）；同一份表单也挂在插件详情页的 plugins.bundle.config 座席上。**不注册 workspace 侧边栏座席。**它不是"通道管理"的别名：通道是**怎么连**，视觉模型是**用什么画、画成什么样**。
 
 分区（自上而下）：
 

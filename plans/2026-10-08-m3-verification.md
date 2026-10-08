@@ -69,7 +69,16 @@ m3-real-contact-sheet.html · m3-real-page-02-prompt.json
   分镜若引用未登记角色名，plan 直接报错（否则文字锁会静默失效）。
 - **产物路由必须做路径包含校验**：resolve 归一后仍须以插件数据目录为前缀，穿越一律 400（已单测）。
 
-## 7. 已知限制
+## 7. 位置更正（需求方反馈）
+
+「视觉模型」配置菜单属于**设置页面**，不是 workspace 侧边栏。
+
+- 初版把「图像工坊」注册到了 sidebar.panellist（工作区侧栏），位置不对；
+- 现改为：settings.section 注册两个设置页菜单——「视觉模型」（order 20，配置主入口）与
+  「图像工坊」（order 21，项目与产物），插件详情页另挂同一份表单的 plugins.bundle.config 卡片；
+- **不再注册任何 workspace 侧边栏座席**，并加了两条回归断言（座席清单 + 源码不含 sidebar.panellist）。
+
+## 8. 已知限制
 
 - QiLin 真机仍未启动：需求方将自行安装验证，清单见 docs/install-and-verify.md。
 - 联系表内图片是相对路径：在侧边栏/浏览器里必须经产物路由打开（工作台已按此实现）。
