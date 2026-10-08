@@ -1,0 +1,28 @@
+# dsh-kylin-images bundle layer.
+#
+# 同一份 cordis.patch.yml 被 dsh 与 qilin 两个通道加载（package.json 的
+# dsh.bundle.patch 与 qilin.bundle.patch 指向本文件），两个宿主行为一致。
+#
+# 本文件只做静态 YAML，不使用任何宿主特有的脚本表达式，所有环境变量兜底
+# 都在 src/ 内解析（可单测，两宿主同一份逻辑）。
+#
+# 后续层（profile 自身 cordis.patch.yml、--patch 覆盖）可按行 id 覆写或禁用本行。
+
+- insert:
+    - id: dsh-kylin-images
+      name: 'dsh-kylin-images'
+      config:
+        # 「视觉模型」的非敏感默认值；敏感凭据一律走插件自己的 vault（0600），
+        # 不进宿主设置。
+        defaultChannelId: ''
+        defaultModel: ''
+        defaultAspectRatio: '3:4'
+        defaultResolution: '2k'
+        defaultFormat: 'png'
+        defaultCount: 1
+        concurrency: 2
+        includeTemplatePitfalls: true
+        budgetConfirmCny: 1
+        confirmUnknownPrice: true
+        cacheEnabled: true
+        cacheMaxEntries: 200

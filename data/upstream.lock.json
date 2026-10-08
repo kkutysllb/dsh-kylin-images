@@ -1,0 +1,30 @@
+{
+  "repository": "freestylefly/awesome-gpt-image-2",
+  "ref": "main",
+  "commit": "65a9c57a1968a13f2f1997c58409cac9aa146bc7",
+  "license": "MIT",
+  "notice": "THIRD_PARTY_NOTICES.md",
+  "syncedAt": "2026-10-08T16:00:13.646Z",
+  "files": {
+    "style-library.json": {
+      "source": "data/style-library.json",
+      "sha256": "80f5cae039d0d6f312f0e2de2c9b3fc8a806640b0d517c120d704a71c5e4aa72",
+      "bytes": 41477,
+      "counts": {
+        "templates": 22,
+        "categories": 13,
+        "styles": 19,
+        "scenes": 10
+      }
+    },
+    "cases.json": {
+      "source": "data/cases.json",
+      "sha256": "a9ef652dffdac0802c656e4770f9793315292fa78e955d3e8c6e0e6346eb7da8",
+      "bytes": 1338334,
+      "counts": {
+        "cases": 541,
+        "totalCases": 541
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+.DS_Store
+node_modules/
+lib/
+.scratch/
+.pnpm-store/
+*.tgz
+test-results/
+.dsh-kylin-images/

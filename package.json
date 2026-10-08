@@ -1,0 +1,86 @@
+{
+  "name": "dsh-kylin-images",
+  "version": "0.1.0",
+  "description": "麒麟（QiLin）/ DSH 双通道图像创作插件：Prompt-as-Code 样式库 + 确定性提示词编译器 + 知识漫画管线 + 视觉模型配置菜单",
+  "keywords": [
+    "deepseek-harness",
+    "dsh",
+    "qilin",
+    "kylin",
+    "cordis",
+    "image-generation",
+    "prompt-as-code",
+    "knowledge-comic"
+  ],
+  "license": "MIT",
+  "type": "module",
+  "engines": {
+    "node": ">=24"
+  },
+  "main": "./lib/index.js",
+  "exports": {
+    ".": "./lib/index.js",
+    "./client": "./client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "data",
+    "skills",
+    "client.js",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "THIRD_PARTY_NOTICES.md"
+  ],
+  "scripts": {
+    "test": "node --test \"test/*.test.ts\"",
+    "typecheck": "tsc -p tsconfig.all.json --noEmit",
+    "build": "tsc -p tsconfig.json",
+    "prepare": "npm run build",
+    "sync:upstream": "node scripts/sync-upstream.mjs",
+    "sync:check": "node scripts/sync-upstream.mjs --check",
+    "prepack": "npm run typecheck && npm test && npm run sync:check"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.3"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/dsh": ">=0.1.0-rc.5 <1.0.0 || >=3.0.0 <4.0.0"
+  },
+  "peerDependenciesMeta": {
+    "@deepseek-ai/dsh": {
+      "optional": true
+    }
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "bundle": "./client.js",
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  },
+  "qilin": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "bundle": "./client.js",
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-client-ui-plugin-manager"
+      ]
+    }
+  }
+}

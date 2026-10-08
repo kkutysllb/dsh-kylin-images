@@ -1,0 +1,252 @@
+/**
+ * HTTP 路由（fenced JSON API）。
+ *
+ * 安全边界沿用本生态既有结论：Host 回环信任（DNS-rebind 防御）、写操作 POST-only、
+ * JSON body、零 shell 拼接、响应一律 {ok,value} / {ok,error}。
+ */
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import type { IncomingMessage, ServerResponse } from 'node:http'
+import { composePrompt } from '../prompt/compose.ts'
+import { loadLibrary, searchLibrary } from '../library/store.ts'
+import type { Library } from '../library/store.ts'
+import { suggestTemplates } from '../prompt/match.ts'
+import { appendSpend, readSpend, summarizeSpend } from '../store/spend.ts'
+import type { PluginRuntime } from './registry.ts'
+
+export const PLUGIN_NAME = 'dsh-kylin-images'
+export const API_PREFIX = '/dsh-kylin-images/api'
+// 插件自有的健康路径：不占用宿主的 /health（避免前缀路由劫持宿主健康检查）。
+export const HEALTH_PATH = '/dsh-kylin-images/health'
+
+export interface RouteRequest { method: string; pathname: string; host: string; headers: Record<string, string | string[] | undefined> }
+export interface RouteResponse { status: number; payload: unknown }
+
+export function isLoopbackHost(headers: Record<string, string | string[] | undefined>): boolean {
+  const raw = headers['host']
+  const value = Array.isArray(raw) ? raw[0] : raw
+  if (typeof value !== 'string') return false
+  const host = value.toLowerCase().replace(/:\d+$/, '').replace(/^\[|\]$/g, '')
+  return host === '127.0.0.1' || host === 'localhost' || host === '::1'
+}
+
+function errorPayload(code: string, message: string): unknown {
+  return { ok: false, error: { code, message } }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+let cachedLibrary: Library | undefined
+
+function library(): Library {
+  if (cachedLibrary === undefined) cachedLibrary = loadLibrary()
+  return cachedLibrary
+}
+
+/** 纯函数路由：不碰 req/res，便于单测直接调用。 */
+export async function handleRequest(
+  runtime: PluginRuntime,
+  request: RouteRequest,
+  body: unknown,
+): Promise<RouteResponse | undefined> {
+  const { pathname } = request
+  if (!isLoopbackHost(request.headers)) {
+    return { status: 403, payload: errorPayload('forbidden', 'only loopback hosts may access this plugin API') }
+  }
+  const method = request.method.toUpperCase()
+
+  if (method === 'GET' && pathname === HEALTH_PATH) {
+    return { status: 200, payload: { ok: true, value: { name: PLUGIN_NAME, home: runtime.home, channels: runtime.vault.list().length } } }
+  }
+
+  if (!pathname.startsWith(API_PREFIX)) return undefined
+  const action = pathname.slice(API_PREFIX.length).replace(/^\//, '')
+
+  if (method === 'GET' && action === 'state') {
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        value: {
+          ...runtime.vault.publicData(),
+          spend: summarizeSpend(readSpend(runtime.home)),
+        },
+      },
+    }
+  }
+
+  if (method !== 'POST') {
+    return { status: 405, payload: errorPayload('method-not-allowed', 'writes must use POST') }
+  }
+
+  const payload = isRecord(body) ? body : {}
+
+  if (action === 'channels.upsert') {
+    const result = runtime.vault.upsert(payload['channel'] ?? payload)
+    if (!result.ok) return { status: 400, payload: errorPayload('invalid-channel', result.errors.join('; ')) }
+    return { status: 200, payload: { ok: true, value: result.channel } }
+  }
+
+  if (action === 'channels.remove') {
+    const id = String(payload['id'] ?? '')
+    if (!runtime.vault.remove(id)) return { status: 404, payload: errorPayload('not-found', '找不到通道 ' + id) }
+    return { status: 200, payload: { ok: true, value: { removed: id } } }
+  }
+
+  if (action === 'channels.test') {
+    const id = String(payload['id'] ?? runtime.vault.settings().defaultChannelId)
+    const channel = runtime.vault.find(id)
+    if (channel === undefined) return { status: 404, payload: errorPayload('not-found', '找不到通道 ' + id) }
+    const provider = runtime.providerFor(channel)
+    const health = await provider.health(channel)
+    return { status: 200, payload: { ok: true, value: { channelId: channel.id, ...health } } }
+  }
+
+  if (action === 'settings.update') {
+    const settings = runtime.vault.updateSettings(payload['patch'] ?? payload)
+    return { status: 200, payload: { ok: true, value: settings } }
+  }
+
+  if (action === 'library.search') {
+    const query = isRecord(payload['query']) ? payload['query'] : payload
+    const result = searchLibrary(library(), {
+      query: typeof query['query'] === 'string' ? query['query'] : undefined,
+      category: typeof query['category'] === 'string' ? query['category'] : undefined,
+      styles: Array.isArray(query['styles']) ? query['styles'].filter((item): item is string => typeof item === 'string') : undefined,
+      scenes: Array.isArray(query['scenes']) ? query['scenes'].filter((item): item is string => typeof item === 'string') : undefined,
+      tags: Array.isArray(query['tags']) ? query['tags'].filter((item): item is string => typeof item === 'string') : undefined,
+      limit: typeof query['limit'] === 'number' ? query['limit'] : undefined,
+      cursor: typeof query['cursor'] === 'number' ? query['cursor'] : undefined,
+      include: query['include'] === 'prompt' ? 'prompt' : 'summary',
+    }, typeof query['locale'] === 'string' ? query['locale'] : 'zh')
+    return { status: 200, payload: { ok: true, value: result } }
+  }
+
+  if (action === 'library.suggest') {
+    const need = isRecord(payload['need']) ? payload['need'] : payload
+    const candidates = suggestTemplates(library(), {
+      query: typeof need['query'] === 'string' ? need['query'] : undefined,
+      category: typeof need['category'] === 'string' ? need['category'] : undefined,
+      styles: Array.isArray(need['styles']) ? need['styles'].filter((item): item is string => typeof item === 'string') : undefined,
+      scenes: Array.isArray(need['scenes']) ? need['scenes'].filter((item): item is string => typeof item === 'string') : undefined,
+      tags: Array.isArray(need['tags']) ? need['tags'].filter((item): item is string => typeof item === 'string') : undefined,
+    }, typeof need['locale'] === 'string' ? need['locale'] : 'zh')
+    return { status: 200, payload: { ok: true, value: candidates } }
+  }
+
+  if (action === 'compose') {
+    const settings = runtime.vault.settings()
+    const composed = composePrompt({
+      prompt: payload['prompt'],
+      templatePitfalls: Array.isArray(payload['templatePitfalls'])
+        ? payload['templatePitfalls'].filter((item): item is string => typeof item === 'string')
+        : undefined,
+      globalNegative: settings.globalNegative,
+      sizeStyle: typeof payload['sizeStyle'] === 'string' ? (payload['sizeStyle'] as never) : undefined,
+    })
+    return { status: 200, payload: { ok: true, value: composed } }
+  }
+
+  if (action === 'generate') {
+    const settings = runtime.vault.settings()
+    const channelId = typeof payload['channelId'] === 'string' && payload['channelId'] !== ''
+      ? payload['channelId']
+      : settings.defaultChannelId
+    const channel = runtime.vault.find(channelId)
+    if (channel === undefined) {
+      return { status: 400, payload: errorPayload('no-channel', '尚未配置通道：请在「视觉模型」设置里添加一个通道') }
+    }
+    const composed = composePrompt({ prompt: payload['prompt'], globalNegative: settings.globalNegative })
+    const outputDir = typeof payload['outputDir'] === 'string' && payload['outputDir'] !== ''
+      ? payload['outputDir']
+      : join(runtime.home, 'outputs')
+    mkdirSync(outputDir, { recursive: true, mode: 0o700 })
+    const started = Date.now()
+    const result = await runtime.providerFor(channel).generate(channel, {
+      channelId: channel.id,
+      model: typeof payload['model'] === 'string' && payload['model'] !== '' ? payload['model'] : settings.defaultModel,
+      prompt: composed.prompt,
+      negative: composed.negative,
+      size: composed.size.size,
+      resolution: composed.size.resolution,
+      count: settings.defaultCount,
+      outputDir,
+      fileStem: 'img-' + String(started),
+    })
+    appendSpend(runtime.home, {
+      at: new Date().toISOString(),
+      channelId: channel.id,
+      model: result.model,
+      count: result.images.length,
+      amount: result.quote.amount,
+      currency: result.quote.currency,
+      confidence: result.quote.confidence,
+      promptChars: composed.prompt.length,
+      durationMs: Date.now() - started,
+    })
+    return { status: 200, payload: { ok: true, value: { ...result, negative: composed.negative, warnings: composed.warnings } } }
+  }
+
+  return { status: 404, payload: errorPayload('unknown-action', '未知操作 ' + action) }
+}
+
+export interface WebServerLike {
+  register(options: { kind: string; path: string; handler: (req: IncomingMessage, res: ServerResponse) => void | Promise<void> }): () => void
+}
+
+async function readBody(req: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = []
+  for await (const chunk of req) chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(String(chunk)))
+  const raw = Buffer.concat(chunks).toString('utf8')
+  if (raw.trim() === '') return {}
+  try {
+    return JSON.parse(raw) as unknown
+  } catch {
+    return undefined
+  }
+}
+
+function send(res: ServerResponse, status: number, payload: unknown): void {
+  try {
+    res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' })
+    res.end(JSON.stringify(payload))
+  } catch {
+    // 客户端已断开：无处可报
+  }
+}
+
+export function createHandler(runtime: PluginRuntime) {
+  return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
+    const url = new URL(req.url ?? '/', 'http://dsh.internal')
+    const pathname = url.pathname
+    if (pathname !== HEALTH_PATH && !pathname.startsWith(API_PREFIX)) return
+    const body = req.method?.toUpperCase() === 'POST' ? await readBody(req) : {}
+    if (body === undefined) {
+      send(res, 400, errorPayload('invalid-json', '请求体不是合法 JSON'))
+      return
+    }
+    const outcome = await handleRequest(runtime, {
+      method: req.method ?? 'GET',
+      pathname,
+      host: String(req.headers.host ?? ''),
+      headers: req.headers,
+    }, body)
+    if (outcome === undefined) return
+    send(res, outcome.status, outcome.payload)
+  }
+}
+
+export function registerRoutes(webServer: WebServerLike, runtime: PluginRuntime): () => void {
+  const handler = createHandler(runtime)
+  const disposers = [
+    webServer.register({ kind: 'prefix', path: HEALTH_PATH, handler }),
+    webServer.register({ kind: 'prefix', path: API_PREFIX, handler }),
+  ]
+  return () => {
+    for (const dispose of disposers) {
+      try { dispose() } catch { /* 卸载期异常忽略 */ }
+    }
+  }
+}
