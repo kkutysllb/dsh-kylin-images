@@ -13,6 +13,9 @@ import { describeError } from '../provider/errors.ts'
 import { describeQuote } from '../provider/pricing.ts'
 import { readSpend, summarizeSpend } from '../store/spend.ts'
 import { runBatch, runGeneration } from '../host/generate.ts'
+import { listProjects, runComicAction } from '../comic/service.ts'
+import type { ComicActionInput } from '../comic/service.ts'
+import { describePlan } from '../comic/plan.ts'
 import type { GenerationInput, GenerationOutcome } from '../host/generate.ts'
 import type { PluginRuntime } from '../host/registry.ts'
 
@@ -384,6 +387,82 @@ function batchTool(runtime: PluginRuntime): ToolDefinition {
   }
 }
 
+function comicTool(runtime: PluginRuntime): ToolDefinition {
+  return {
+    name: 'img_comic',
+    output: stringOutput('知识漫画'),
+    description: [
+      '知识漫画项目全生命周期：open（开项目 + 按内容信号自动选型）/ plan（落盘角色表与分镜，并编译每页 ImagePrompt v1）',
+      '/ sheet（角色三视图，图像锁）/ render（逐页出图，文字锁 + 图像锁 + 风格锁）/ status / assemble（零依赖联系表）。',
+      '插件不做 LLM 调用：分析与分镜由你产出，本工具负责校验、编译、执行与组装。',
+    ].join(''),
+    parameters: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['open', 'plan', 'sheet', 'render', 'status', 'assemble'] },
+        id: { type: 'string', description: '项目标识（open 之后返回）' },
+        topic: { type: 'string', description: 'open：主题或标题' },
+        source: { type: 'string', description: 'open：源内容（长文/资料整理稿）' },
+        keywords: { type: 'array', items: { type: 'string' }, description: 'open：内容信号关键词（用于自动选型），缺省用 topic' },
+        plan: { type: 'object', description: 'open：显式覆盖视觉方案 { artStyle, tone, layout, aspectRatio }' },
+        channelId: { type: 'string', description: 'open：指定通道；缺省用默认通道' },
+        model: { type: 'string', description: 'open：指定模型' },
+        imageLock: { type: 'boolean', description: 'open：是否启用图像锁（角色三视图做参考图），默认开' },
+        dir: { type: 'string', description: '项目根目录；缺省 <插件数据目录>/comics' },
+        analysis: { type: 'string', description: 'plan：分析文本（写入 analysis.md）' },
+        characters: { type: 'array', description: 'plan：角色表 [{ name, sheet }]，sheet 是给模型的外观描述（越细越一致）', items: { type: 'object' } },
+        storyboard: { type: 'object', description: 'plan：分镜 { pages: [{ title, core?, scene?, characters?, layout?, shot?, panels?, focus?, dialogue?: [{speaker?,text}], narration? }] }' },
+        pages: { type: 'array', items: { type: 'number' }, description: 'render：只渲染这些页号；缺省渲染所有未完成的页' },
+        concurrency: { type: 'number', description: 'render：并发 1-8' },
+        confirm: { type: 'boolean', description: 'render/sheet：已确认成本时置 true' },
+      },
+      required: ['action'],
+      additionalProperties: false,
+    },
+    execute: async (args) => {
+      const action = String(args['action'] ?? '')
+      const id = str(args['id'])
+      if (action === 'status' && id === undefined) {
+        const projects = listProjects(runtime)
+        if (projects.length === 0) return '还没有漫画项目。用 img_comic action=open topic="..." 开一个。'
+        return ['共 ' + String(projects.length) + ' 个项目：'].concat(projects.map((project) => {
+          const done = project.pages.filter((page) => page.status === 'rendered').length
+          return '- ' + project.id + ' | ' + project.topic + ' | ' + project.stage + ' | ' + String(done) + '/' + String(project.pages.length) + ' 页 | ' + describePlan(project.plan)
+        })).join(String.fromCharCode(10))
+      }
+      const planInput = args['plan']
+      const input: ComicActionInput = {
+        action,
+        id,
+        topic: str(args['topic']),
+        source: str(args['source']),
+        analysis: str(args['analysis']),
+        keywords: stringList(args['keywords']),
+        plan: typeof planInput === 'object' && planInput !== null && !Array.isArray(planInput)
+          ? (planInput as ComicActionInput['plan'])
+          : undefined,
+        channelId: str(args['channelId']),
+        model: str(args['model']),
+        dir: str(args['dir']),
+        imageLock: args['imageLock'] === false ? false : undefined,
+        characters: args['characters'],
+        storyboard: args['storyboard'],
+        pages: Array.isArray(args['pages']) ? args['pages'].filter((item): item is number => typeof item === 'number') : undefined,
+        concurrency: num(args['concurrency']),
+        confirm: args['confirm'] === true,
+      }
+      const outcome = await runComicAction(runtime, input)
+      const lines = [outcome.message]
+      for (const artifact of outcome.artifacts) lines.push('- ' + artifact)
+      if (outcome.project !== undefined && outcome.artifacts.length > 0) {
+        const images = outcome.artifacts.filter((path) => path.endsWith('.png'))
+        if (images.length > 0) lines.push('用 read_image 查看产物即可自评。')
+      }
+      return lines.join(String.fromCharCode(10))
+    },
+  }
+}
+
 export function createTools(runtime: PluginRuntime): ToolDefinition[] {
   return [
     channelsTool(runtime),
@@ -391,6 +470,7 @@ export function createTools(runtime: PluginRuntime): ToolDefinition[] {
     composeTool(runtime),
     generateTool(runtime),
     batchTool(runtime),
+    comicTool(runtime),
   ]
 }
 

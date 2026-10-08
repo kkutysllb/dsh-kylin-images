@@ -4,7 +4,7 @@ import { mkdtempSync, rmSync, statSync } from 'node:fs'
 import { createServer } from 'node:http'
 import { join } from 'node:path'
 import { createRuntime } from '../src/host/registry.ts'
-import { API_PREFIX, HEALTH_PATH, createHandler, handleRequest, isLoopbackHost } from '../src/host/routes.ts'
+import { API_PREFIX, ARTIFACT_PATH, HEALTH_PATH, createHandler, handleRequest, isLoopbackHost } from '../src/host/routes.ts'
 import type { PluginRuntime } from '../src/host/registry.ts'
 import { createTools } from '../src/tools/index.ts'
 import { apply, name, inject, Config, CONFIG_FIELDS, CONFIG_FIELD_SPECS } from '../src/index.ts'
@@ -152,10 +152,10 @@ test('真实 HTTP 往返：回环 Host 可访问 /health 与写接口', async ()
   }
 })
 
-test('工具面：注册三个 img_* 工具且输出可读', async () => {
+test('工具面：注册六个 img_* 工具且输出可读', async () => {
   await withRuntime(async (runtime) => {
     const tools = createTools(runtime)
-    assert.deepEqual(tools.map((tool) => tool.name), ['img_channels', 'img_library', 'img_compose', 'img_generate', 'img_batch'])
+    assert.deepEqual(tools.map((tool) => tool.name), ['img_channels', 'img_library', 'img_compose', 'img_generate', 'img_batch', 'img_comic'])
     runtime.vault.upsert({ id: 'mock', label: '本地 mock', kind: 'mock' })
     const listOutput = await tools[0]!.execute({ action: 'list' })
     assert.ok(listOutput.includes('通道数：1'))
@@ -207,8 +207,8 @@ test('插件入口：双通道可加载，apply 注册路由与工具', () => {
   try {
     apply(ctx)
     assert.equal(effectCalls, 1)
-    assert.deepEqual(routes, ['/dsh-kylin-images/health', API_PREFIX])
-    assert.deepEqual(toolNames, ['img_channels', 'img_library', 'img_compose', 'img_generate', 'img_batch'])
+    assert.deepEqual(routes, ['/dsh-kylin-images/health', API_PREFIX, ARTIFACT_PATH])
+    assert.deepEqual(toolNames, ['img_channels', 'img_library', 'img_compose', 'img_generate', 'img_batch', 'img_comic'])
   } finally {
     if (previous === undefined) delete process.env['DSH_KYLIN_IMAGES_HOME']
     else process.env['DSH_KYLIN_IMAGES_HOME'] = previous

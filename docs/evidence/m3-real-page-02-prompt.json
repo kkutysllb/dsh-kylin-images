@@ -1,0 +1,57 @@
+{
+  "schemaVersion": 1,
+  "id": "图灵的密码战争/page-02",
+  "intent": "comic-page",
+  "subject": "每天早上的天气报文格式固定，成了已知明文；场景：同一间密码室，清晨，第一缕光",
+  "composition": {
+    "layout": "cinematic",
+    "panels": [
+      "电报纸带上的固定前缀",
+      "图灵突然坐直",
+      "眼睛发亮的一瞬"
+    ],
+    "hierarchy": [
+      "顿悟的瞬间"
+    ]
+  },
+  "style": {
+    "artStyle": "ligne-claire",
+    "tone": "neutral",
+    "tags": [
+      "Illustration"
+    ]
+  },
+  "technical": {
+    "aspectRatio": "3:4",
+    "resolution": "2k",
+    "format": "png"
+  },
+  "constraints": {
+    "must": [
+      "Keep one consistent art style, palette and line weight across every page of this comic: ligne-claire art style with a neutral tone; never switch to another visual style."
+    ],
+    "avoid": [
+      "photorealistic photo",
+      "3D render",
+      "inconsistent character design",
+      "garbled text"
+    ]
+  },
+  "meta": {
+    "source": "comic:图灵的密码战争#2"
+  },
+  "characters": [
+    {
+      "name": "图灵",
+      "sheet": "mid-30s British man, lean build, square jaw, round wire-rimmed glasses, messy short dark hair, grey tweed suit jacket over white shirt without tie, often holding a pipe, furrowed brow when thinking"
+    }
+  ],
+  "text": [
+    {
+      "content": "每天早上的开头，都是一样的！",
+      "kind": "speech-bubble",
+      "mustRenderExactly": true,
+      "speaker": "图灵"
+    }
+  ]
+}

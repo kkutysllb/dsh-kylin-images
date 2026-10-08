@@ -7,6 +7,9 @@
  *     fiber 推导 + cordis 的 resolveConfig 校验），并在 settings.installSection 存在时
  *     注册（QiLin 3.x 只认这条）。
  */
+import { existsSync, readFileSync, readdirSync } from 'node:fs'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { createRuntime } from './host/registry.ts'
 import { API_PREFIX, HEALTH_PATH, PLUGIN_NAME, registerRoutes } from './host/routes.ts'
 import type { WebServerLike } from './host/routes.ts'
@@ -25,6 +28,9 @@ export const SETTINGS_NAMESPACE = PLUGIN_NAME
 export { Config }
 export { CONFIG_FIELD_NAMES as CONFIG_FIELDS }
 export const CONFIG_FIELD_SPECS = CONFIG_FIELDS
+
+/** 随包分发的 runtime skill 目录（编译后位于 <包根>/skills）。 */
+const SKILLS_DIR = join(dirname(fileURLToPath(import.meta.url)), '..', 'skills')
 
 interface ToolRegistry {
   register(definition: unknown): unknown
@@ -46,6 +52,10 @@ export interface CordisContext {
  * 的选择悄悄改回去。播种结果会落盘，因此只在首次写入。
  */
 function seedSettingsFromHost(runtime: PluginRuntime, config: unknown): void {
+  // 只在 vault 尚未存在（首次激活）时播种。
+  // 否则宿主 patch 里的默认值会在每次启动时把用户在「视觉模型」里做的选择覆盖掉
+  // ——这是联调时抓到的真实缺陷（默认通道被重置为空）。
+  if (runtime.vault.exists()) return
   const picked = pickConfigFields(config)
   if (Object.keys(picked).length === 0) return
   const resolved = resolvePluginConfig(config)
@@ -98,6 +108,62 @@ function installSettingsSection(ctx: CordisContext, runtime: PluginRuntime): voi
   }
 }
 
+export interface SkillMetadata { meta: Record<string, string>; body: string }
+
+/** 极简 frontmatter 解析：只取 name/description 这类单行标量，不引 YAML 解析器。 */
+export function parseFrontmatter(raw: string): SkillMetadata {
+  const fence = '---'
+  if (!raw.startsWith(fence)) return { meta: {}, body: raw }
+  const end = raw.indexOf(String.fromCharCode(10) + fence, fence.length)
+  if (end < 0) return { meta: {}, body: raw }
+  const head = raw.slice(fence.length, end)
+  const body = raw.slice(end + fence.length + 1).replace(/^\n+/, '')
+  const meta: Record<string, string> = {}
+  for (const line of head.split(/\r?\n/)) {
+    const match = /^([A-Za-z_][A-Za-z0-9_]*):\s*(.*)$/.exec(line)
+    if (match === null) continue
+    const key = match[1]
+    const value = match[2]
+    if (key !== undefined && value !== undefined) meta[key] = value.trim()
+  }
+  return { meta, body }
+}
+
+/**
+ * 注册随包的 runtime skill。
+ *
+ * 软探测 skills 服务：DSH/QiLin 都提供，但缺位时不应影响宿主侧的工具与路由。
+ * 注册形态对齐 dsh-skills-bundle：正文剥离 frontmatter，资源目录随附。
+ */
+function installSkills(ctx: CordisContext): void {
+  const dynamicInject = ctx.inject
+  if (typeof dynamicInject !== 'function') return
+  if (!existsSync(SKILLS_DIR)) return
+  try {
+    dynamicInject.call(ctx, ['skills'], (scoped: unknown) => {
+      const skills = (scoped as { skills?: { register?: (definition: unknown) => unknown } }).skills
+      if (typeof skills?.register !== 'function') return
+      for (const entry of readdirSync(SKILLS_DIR)) {
+        const dir = join(SKILLS_DIR, entry)
+        const file = join(dir, 'SKILL.md')
+        if (!existsSync(file)) continue
+        const parsed = parseFrontmatter(readFileSync(file, 'utf8'))
+        const skillName = parsed.meta['name']
+        if (skillName === undefined) continue
+        skills.register({
+          name: skillName,
+          description: parsed.meta['description'] ?? '',
+          source: 'runtime',
+          content: parsed.body,
+          resourceBase: { kind: 'directory', path: dir },
+        })
+      }
+    })
+  } catch (error) {
+    ctx.logger?.warn('[' + PLUGIN_NAME + '] 技能注册跳过：' + String(error))
+  }
+}
+
 export function apply(ctx: CordisContext, rawConfig?: unknown): void {
   const runtime = createRuntime()
   seedSettingsFromHost(runtime, rawConfig)
@@ -112,6 +178,7 @@ export function apply(ctx: CordisContext, rawConfig?: unknown): void {
       if (typeof dispose === 'function') disposers.push(dispose as () => void)
     }
     installSettingsSection(ctx, runtime)
+    installSkills(ctx)
     return () => {
       for (const dispose of disposers.reverse()) {
         try { dispose() } catch { /* 卸载期异常忽略 */ }

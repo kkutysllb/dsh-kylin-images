@@ -4,7 +4,8 @@
  * 安全边界沿用本生态既有结论：Host 回环信任（DNS-rebind 防御）、写操作 POST-only、
  * JSON body、零 shell 拼接、响应一律 {ok,value} / {ok,error}。
  */
-import { mkdirSync } from 'node:fs'
+import { createReadStream, existsSync, mkdirSync, statSync } from 'node:fs'
+import { extname, join as joinPath, normalize, resolve, sep } from 'node:path'
 import { join } from 'node:path'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { composePrompt } from '../prompt/compose.ts'
@@ -13,14 +14,45 @@ import type { Library } from '../library/store.ts'
 import { suggestTemplates } from '../prompt/match.ts'
 import { appendSpend, readSpend, summarizeSpend } from '../store/spend.ts'
 import { runBatch, runGeneration } from './generate.ts'
+import { listProjects, runComicAction } from '../comic/service.ts'
+import type { ComicActionInput } from '../comic/service.ts'
 import type { PluginRuntime } from './registry.ts'
 
 export const PLUGIN_NAME = 'dsh-kylin-images'
 export const API_PREFIX = '/dsh-kylin-images/api'
+export const ARTIFACT_PATH = '/dsh-kylin-images/artifact'
+
+export const ARTIFACT_TYPES: Record<string, string> = {
+  '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.webp': 'image/webp',
+  '.gif': 'image/gif',
+  '.html': 'text/html; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.md': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+}
+
+/**
+ * 把请求里的相对路径解析成插件数据目录内的绝对路径。
+ *
+ * 安全边界：只允许插件自有目录内的文件（realpath 归一后仍须以根目录为前缀），
+ * 拒绝绝对路径、`..` 穿越与超出根目录的符号链接目标。
+ */
+export function resolveArtifact(root: string, relative: string): string | undefined {
+  if (typeof relative !== 'string' || relative.trim() === '') return undefined
+  const cleaned = relative.replace(/^[/\\]+/, '')
+  if (cleaned === '') return undefined
+  const rootReal = resolve(root)
+  const candidate = resolve(rootReal, normalize(cleaned))
+  if (candidate !== rootReal && !candidate.startsWith(rootReal + sep)) return undefined
+  return candidate
+}
 // 插件自有的健康路径：不占用宿主的 /health（避免前缀路由劫持宿主健康检查）。
 export const HEALTH_PATH = '/dsh-kylin-images/health'
 
-export interface RouteRequest { method: string; pathname: string; host: string; headers: Record<string, string | string[] | undefined> }
+export interface RouteRequest { method: string; pathname: string; host: string; headers: Record<string, string | string[] | undefined>; query?: Record<string, string> | undefined }
 export interface RouteResponse { status: number; payload: unknown }
 
 export function isLoopbackHost(headers: Record<string, string | string[] | undefined>): boolean {
@@ -62,8 +94,9 @@ export async function handleRequest(
     return { status: 200, payload: { ok: true, value: { name: PLUGIN_NAME, home: runtime.home, channels: runtime.vault.list().length } } }
   }
 
-  if (!pathname.startsWith(API_PREFIX)) return undefined
-  const action = pathname.slice(API_PREFIX.length).replace(/^\//, '')
+  const isArtifact = pathname.startsWith(ARTIFACT_PATH)
+  if (!pathname.startsWith(API_PREFIX) && !isArtifact) return undefined
+  const action = isArtifact ? 'artifact' : pathname.slice(API_PREFIX.length).replace(/^\//, '')
 
   if (method === 'GET' && action === 'state') {
     return {
@@ -77,6 +110,44 @@ export async function handleRequest(
         },
       },
     }
+  }
+
+  if (method === 'GET' && action === 'artifact') {
+    const relative = request.query?.['path'] ?? ''
+    const target = resolveArtifact(runtime.home, relative)
+    if (target === undefined) return { status: 400, payload: errorPayload('bad-path', 'path 必须是插件数据目录内的相对路径') }
+    if (!existsSync(target) || !statSync(target).isFile()) return { status: 404, payload: errorPayload('not-found', '产物不存在') }
+    return { status: 200, payload: { __file: target } }
+  }
+
+  if (method === 'GET' && action === 'comic.list') {
+    const projects = listProjects(runtime)
+    return {
+      status: 200,
+      payload: {
+        ok: true,
+        value: projects.map((project) => ({
+          id: project.id,
+          topic: project.topic,
+          stage: project.stage,
+          plan: project.plan,
+          pages: project.pages.length,
+          rendered: project.pages.filter((page) => page.status === 'rendered').length,
+          failed: project.pages.filter((page) => page.status === 'failed').length,
+          spend: project.spend,
+          updatedAt: project.updatedAt,
+        })),
+      },
+    }
+  }
+
+  if (method === 'GET' && action === 'comic.status') {
+    const id = request.query?.['id'] ?? ''
+    if (id === '') return { status: 400, payload: errorPayload('missing-id', 'comic.status 需要 ?id=<项目标识>') }
+    const outcome = await runComicAction(runtime, { action: 'status', id })
+    return { status: outcome.ok ? 200 : 404, payload: outcome.ok
+      ? { ok: true, value: outcome.project }
+      : errorPayload('not-found', outcome.message) }
   }
 
   if (method === 'GET' && action === 'cache.stats') {
@@ -222,6 +293,15 @@ export async function handleRequest(
     return { status: 200, payload: { ok: true, value: runtime.cache.stats() } }
   }
 
+  if (action === 'comic.action') {
+    const input = (isRecord(payload['input']) ? payload['input'] : payload) as unknown as ComicActionInput
+    const outcome = await runComicAction(runtime, input)
+    if (!outcome.ok && outcome.message.startsWith('未知动作')) {
+      return { status: 400, payload: errorPayload('unknown-action', outcome.message) }
+    }
+    return { status: 200, payload: { ok: outcome.ok, value: outcome } }
+  }
+
   if (action === 'cache.clear') {
     return { status: 200, payload: { ok: true, value: { cleared: runtime.cache.clear() } } }
   }
@@ -258,19 +338,33 @@ export function createHandler(runtime: PluginRuntime) {
   return async function handler(req: IncomingMessage, res: ServerResponse): Promise<void> {
     const url = new URL(req.url ?? '/', 'http://dsh.internal')
     const pathname = url.pathname
-    if (pathname !== HEALTH_PATH && !pathname.startsWith(API_PREFIX)) return
+    if (pathname !== HEALTH_PATH && !pathname.startsWith(API_PREFIX) && !pathname.startsWith(ARTIFACT_PATH)) return
     const body = req.method?.toUpperCase() === 'POST' ? await readBody(req) : {}
     if (body === undefined) {
       send(res, 400, errorPayload('invalid-json', '请求体不是合法 JSON'))
       return
     }
+    const query: Record<string, string> = {}
+    url.searchParams.forEach((value, key) => { query[key] = value })
     const outcome = await handleRequest(runtime, {
       method: req.method ?? 'GET',
       pathname,
       host: String(req.headers.host ?? ''),
       headers: req.headers,
+      query,
     }, body)
     if (outcome === undefined) return
+    const payload = outcome.payload as { __file?: string } | undefined
+    if (typeof payload?.__file === 'string') {
+      const type = ARTIFACT_TYPES[extname(payload.__file).toLowerCase()] ?? 'application/octet-stream'
+      try {
+        res.writeHead(200, { 'content-type': type, 'cache-control': 'no-store' })
+        createReadStream(payload.__file).pipe(res)
+      } catch {
+        send(res, 500, errorPayload('read-failed', '产物读取失败'))
+      }
+      return
+    }
     send(res, outcome.status, outcome.payload)
   }
 }
@@ -280,6 +374,7 @@ export function registerRoutes(webServer: WebServerLike, runtime: PluginRuntime)
   const disposers = [
     webServer.register({ kind: 'prefix', path: HEALTH_PATH, handler }),
     webServer.register({ kind: 'prefix', path: API_PREFIX, handler }),
+    webServer.register({ kind: 'prefix', path: ARTIFACT_PATH, handler }),
   ]
   return () => {
     for (const dispose of disposers) {

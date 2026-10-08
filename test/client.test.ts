@@ -47,7 +47,7 @@ test('client.js 自注册且暴露 apply/inject（裸 ESM 会被宿主拒绝）'
   assert.ok(source.includes('__ModuleLoader__.load'), '必须经 ModuleLoader 自注册')
 })
 
-test('apply 在两个设置座席都注册「视觉模型」卡片', () => {
+test('apply 在三个座席注册：配置卡两处 + 侧边栏图像工坊', () => {
   const mod = loadClient()
   const injected: string[] = []
   const registered: Array<Record<string, unknown>> = []
@@ -59,11 +59,19 @@ test('apply 在两个设置座席都注册「视觉模型」卡片', () => {
     },
   }
   mod.apply(ctx)
-  assert.deepEqual(injected, ['plugins.bundle.config', 'settings.section'])
+  assert.deepEqual(injected, ['plugins.bundle.config', 'settings.section', 'sidebar.panellist'])
   assert.equal(registered[0]?.['name'], 'plugins.bundle.config')
   assert.equal(registered[0]?.['key'], 'dsh-kylin-images')
   assert.equal(registered[1]?.['name'], 'settings.section')
   assert.equal(registered[1]?.['label'], '视觉模型')
+  assert.equal(registered[2]?.['name'], 'sidebar.panellist')
+  assert.equal(registered[2]?.['label'], '图像工坊')
+})
+
+test('图像工坊走插件产物路由，且不直接读盘', () => {
+  assert.ok(source.includes('/dsh-kylin-images/artifact'))
+  assert.ok(source.includes('comic.list'))
+  assert.ok(source.includes('contact-sheet.html'))
 })
 
 test('宿主缺插槽时不抛异常（软探测）', () => {

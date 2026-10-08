@@ -127,6 +127,11 @@ export class Vault {
     try { chmodSync(this.path, 0o600) } catch { /* 同上 */ }
   }
 
+  /** vault 文件是否已存在：用于判断「首次激活」（宿主配置只在那时播种）。 */
+  exists(): boolean {
+    return existsSync(this.path)
+  }
+
   list(): ChannelRecord[] {
     return this.data.channels.map((channel) => ({ ...channel }))
   }

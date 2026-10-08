@@ -99,6 +99,17 @@ test('remove：删除通道并把默认通道回退到剩余第一个', () => {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('exists()：新建时为 false，落盘后为 true', () => {
+  const dir = tempDir()
+  try {
+    const vault = new Vault(dir)
+    assert.equal(vault.exists(), false)
+    vault.upsert({ id: 'a', label: 'A', kind: 'mock' })
+    assert.equal(vault.exists(), true)
+    assert.equal(new Vault(dir).exists(), true)
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('vault 文件损坏时容错为空库，不抛异常', () => {
   const dir = tempDir()
   try {

@@ -53,6 +53,16 @@ window.__ModuleLoader__.load({
       cache: '结果缓存',
       spend: '累计消耗',
       realRun: '探测时小额实跑（会产生费用）',
+      workbench: '图像工坊',
+      workbenchIntro: '知识漫画项目：逐页产物与联系表。出图请直接在会话里让模型调用 img_comic。',
+      workbenchEmpty: '还没有漫画项目。在会话里说「把这段内容做成知识漫画」即可开一个。',
+      refresh: '刷新',
+      pages: '页',
+      images: '张',
+      expand: '展开',
+      collapse: '收起',
+      openSheet: '打开联系表',
+      sheetHint: '联系表在浏览器里「打印为 PDF」即可导出 PDF。',
       empty: '还没有配置任何通道。先加一个 mock 通道即可零密钥跑通全链路。',
       loading: '加载中…',
       failed: '操作失败，请稍后重试。',
@@ -89,6 +99,16 @@ window.__ModuleLoader__.load({
       cache: 'Result cache',
       spend: 'Accumulated spend',
       realRun: 'Run one small real generation while probing (costs money)',
+      workbench: 'Image studio',
+      workbenchIntro: 'Knowledge-comic projects: per-page artifacts and the contact sheet. Ask the model to call img_comic in chat to render.',
+      workbenchEmpty: 'No comic project yet. Say "turn this into a knowledge comic" in chat to start one.',
+      refresh: 'Refresh',
+      pages: 'pages',
+      images: 'images',
+      expand: 'Expand',
+      collapse: 'Collapse',
+      openSheet: 'Open contact sheet',
+      sheetHint: 'Print the contact sheet to PDF from the browser.',
       empty: 'No channel configured yet. Add a mock channel to exercise the whole chain with zero keys.',
       loading: 'Loading…',
       failed: 'The operation failed, please retry shortly.',
@@ -315,6 +335,103 @@ window.__ModuleLoader__.load({
         })));
     }
 
+    /* ── 侧边栏「图像工坊」：漫画项目与产物 ─────────────────── */
+
+    var WORKBENCH_ID = 'kylin-images-workbench';
+
+    function artifactUrl(relative) {
+      return '/dsh-kylin-images/artifact?path=' + encodeURIComponent(relative);
+    }
+
+    function ImageWorkbenchPanel() {
+      var stateHook = React.useState({ status: 'loading', projects: [], open: null, detail: null });
+      var snapshot = stateHook[0];
+      var setSnapshot = stateHook[1];
+
+      var load = React.useCallback(function () {
+        request('comic.list').then(function (payload) {
+          if (!payload || payload.ok !== true) {
+            setSnapshot({ status: 'error', projects: [], open: null, detail: null });
+            return;
+          }
+          setSnapshot(function (current) {
+            return { status: 'ready', projects: payload.value || [], open: current.open, detail: current.detail };
+          });
+        }, function () {
+          setSnapshot({ status: 'error', projects: [], open: null, detail: null });
+        });
+      }, []);
+
+      React.useEffect(function () { load(); }, [load]);
+
+      function openProject(id) {
+        if (snapshot.open === id) {
+          setSnapshot(Object.assign({}, snapshot, { open: null, detail: null }));
+          return;
+        }
+        setSnapshot(Object.assign({}, snapshot, { open: id, detail: null }));
+        request('comic.status?id=' + encodeURIComponent(id)).then(function (payload) {
+          if (payload && payload.ok === true) {
+            setSnapshot(Object.assign({}, snapshot, { open: id, detail: payload.value }));
+          }
+        });
+      }
+
+      if (snapshot.status === 'loading') {
+        return React.createElement('p', { className: 'kimg-state' }, t('loading'));
+      }
+      if (snapshot.status === 'error') {
+        return React.createElement('div', null,
+          React.createElement('p', { className: 'kimg-state', 'data-kind': 'error' }, t('loadFailed')),
+          React.createElement('div', { className: 'kimg-actions' },
+            React.createElement('button', { type: 'button', onClick: load }, t('retry'))));
+      }
+
+      return React.createElement('div', { className: 'kimg-root' },
+        React.createElement('p', { className: 'kimg-intro' }, t('workbenchIntro')),
+        React.createElement('div', { className: 'kimg-actions' },
+          React.createElement('button', { type: 'button', onClick: load }, t('refresh'))),
+        snapshot.projects.length === 0
+          ? React.createElement('p', { className: 'kimg-state' }, t('workbenchEmpty'))
+          : React.createElement('div', null, snapshot.projects.map(function (project) {
+              var detail = snapshot.open === project.id ? snapshot.detail : null;
+              var images = [];
+              if (detail && detail.pages) {
+                detail.pages.forEach(function (page) {
+                  if (page.status === 'rendered' && page.imagePath) {
+                    images.push(React.createElement('img', {
+                      key: page.index,
+                      src: artifactUrl('comics/' + project.id + '/' + page.imagePath),
+                      alt: page.title,
+                      style: { width: '48%', margin: '1%', borderRadius: '6px' },
+                    }));
+                  }
+                });
+              }
+              return React.createElement('div', { key: project.id, className: 'kimg-card' },
+                React.createElement('div', { className: 'kimg-row' },
+                  React.createElement('span', { className: 'kimg-name' }, project.topic),
+                  React.createElement('span', { className: 'kimg-meta' },
+                    project.stage + ' · ' + project.rendered + '/' + project.pages + ' ' + t('pages') +
+                    ' · ' + project.spend.images + ' ' + t('images')),
+                  React.createElement('span', { style: { flex: 1 } }),
+                  React.createElement('button', { type: 'button', onClick: function () { openProject(project.id); } },
+                    snapshot.open === project.id ? t('collapse') : t('expand'))),
+                snapshot.open === project.id ? React.createElement('div', null,
+                  React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap' } }, images),
+                  React.createElement('div', { className: 'kimg-actions' },
+                    React.createElement('button', {
+                      type: 'button',
+                      onClick: function () {
+                        if (typeof window !== 'undefined' && window.open) {
+                          window.open(artifactUrl('comics/' + project.id + '/contact-sheet.html'), '_blank');
+                        }
+                      },
+                    }, t('openSheet'))),
+                  React.createElement('p', { className: 'kimg-meta' }, t('sheetHint'))) : null);
+            })));
+    }
+
     var inject = ['slots'];
 
     function apply(ctx) {
@@ -338,6 +455,8 @@ window.__ModuleLoader__.load({
       bindSeat('plugins.bundle.config', { key: 'dsh-kylin-images' }, 'plugins.bundle.config');
       // 兜底面：设置壳的动态分区（DSH 0.1.x 系）
       bindSeat('settings.section', { id: SECTION_ID, order: 55, label: t('nav') }, 'settings.section');
+      // 侧边栏「图像工坊」：漫画项目与产物（软探测，缺座席时静默跳过）
+      bindSeat('sidebar.panellist', { id: WORKBENCH_ID, order: 55, label: t('workbench') }, 'sidebar.panellist');
     }
 
     exports.apply = apply;
