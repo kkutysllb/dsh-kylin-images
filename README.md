@@ -3,7 +3,7 @@
 麒麟（QiLin / Kylin）与 DSH **双通道**的图像创作插件：把 awesome-gpt-image-2 的 Prompt-as-Code 样式库
 与 KSkills 的图像 / 知识漫画技能，接到一个本地可执行的生成层上，并带一个专用的**「视觉模型」配置菜单**。
 
-**状态：M2 完成** —— 知识数据 + 编译器 + 宿主接入 + 视觉模型菜单 + **真实通道（同步 / 异步）** + 通道探测
+**状态：M2 完成（含真实密钥端到端实跑）** —— 知识数据 + 编译器 + 宿主接入 + 视觉模型菜单 + **真实通道（同步 / 异步）** + 通道探测
 + 成本护栏 + 结果缓存 + 批量生成。109 项单测全绿、strict 类型检查零错误，并在**真机 dsh 宿主**上端到端验证。
 
 ## 一句话定位
@@ -30,9 +30,12 @@
 |---|---|---|
 | `mock` | 本地占位图，零密钥零网络 | 首次上手、CI、全链路自检 |
 | `openai-images` | 同步：`POST {base}/v1/images/generations`，回 `b64_json` 或 `url` | OpenAI 官方与多数兼容端点 |
+| `openai-responses` | 同步：`POST {base}/v1/responses` + `tools:[{type:'image_generation', size, quality}]`，回 `output[].result` 的 base64 | 把 images 端点挡掉、只放行 Responses 的聚合站（实测 tianyuai.lol） |
 | `task-images` | 异步：提交 → `task_id` → 轮询（`/v1/tasks/{id}`，可覆盖）→ 签名 URL | 聚合站（Apimart 形态等） |
 
 尺寸风格三形态自动适配：`pixels`（1024x1536）/ `ratio-resolution`（`1:1` + `1k`）/ `ignore`（模型自决）。
+
+> 真实端点实测（2026-10-08）：`https://tianyuai.lol` 把 `/v1/images/generations` 在 nginx 层直接 403，图片模型只能走 `/v1/responses` + `image_generation` 工具——这正是 `openai-responses` 通道类型的由来。同一轮真实出图里，中文对白「时间戳怎么全一样？」逐字正确渲染（见 [docs/evidence](docs/evidence)）。
 **签名 URL 一律立刻下载落盘**（上游 URL 带 `expires_at`）。
 
 ## 成本护栏与缓存

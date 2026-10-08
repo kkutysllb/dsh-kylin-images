@@ -70,9 +70,75 @@ M2 新增覆盖（62 项）：协议工具函数、同步/异步适配器全路�
 - **缓存命中会复制文件到本次产物目录**：调用方拿到的路径语义与真生成一致，缓存对上层完全透明。
 - **轮询超时视为失败**：不记成功、不落半成品。
 
-## 6. 已知限制
+## 6. 真实密钥端到端（2026-10-08 追加）
 
-- 真实通道只用桩 fetch 验证过协议路径；**没有对真实第三方端点做过付费实跑**（需要用户密钥，留给用户侧首跑）。
+需求方提供了真实中转与密钥，因此补做了 M2 原本挂账的**真实付费实跑**。
+
+### 6.1 端点侦察（免费）
+
+| 探测 | 结果 |
+|---|---|
+| `GET /v1/models` | 200，13 个模型（gpt-5.x 文本系 + gpt-image-1 / 1.5 / 2 / 2-4k / 2.5 / 2.5-flare / 2.5-sunburst） |
+| `GET /api/pricing` | 200，43 行；gpt-image-2 = quota_type 1（按次）model_price 0.75 |
+| `POST /v1/chat/completions` | 400 应用层 JSON（模型不支持该端点）→ **鉴权与 POST 正常** |
+| `POST /v1/images/generations` | **403 nginx HTML**（带鉴权、不带鉴权、带浏览器 UA/Referer 均如此）→ 路径被部署层挡掉 |
+| `POST /v1/image/generations`、`/v1/draw/completions` | 404 应用层 JSON `Invalid URL` → 不存在 |
+| `POST /v1/responses` | 200 → **图片模型的真实入口** |
+
+### 6.2 契约钉死
+
+    POST {base}/v1/responses
+    { "model": "gpt-image-2", "input": "<prompt>",
+      "tools": [{ "type": "image_generation", "size": "1024x1536", "quality": "low" }] }
+    -> 200 { output: [ { type: "image_generation_call", status: "completed",
+                        result: "<base64 PNG>", revised_prompt: "..." } ],
+             usage: { completion_tokens_details: { image_tokens: 408 } } }
+
+- 尺寸与质量是**工具对象的参数**，不是顶层字段（请求 1024x1536 → 返回 PNG 实测正是 1024x1536）。
+- 产物是 base64（不是签名 URL），仍立刻落盘。
+- 成本**按图像 token 计费**：三轮实测 2483 token = 1834 额度 ≈ 0.739 额度/token；
+  按 new-api 口径 500000 额度 = 1 USD，则默认画质一张 ≈ ¥0.017、quality=low ≈ ¥0.0045。
+  站点 `/api/pricing` 的 model_price 0.75 与实测口径不一致（观测 611 额度/张），
+  **以余额差值为准**——设计里「计价单位口径要用余额差值钉死」这条再次应验。
+
+### 6.3 新增第三条适配器
+
+原 M2 的两条适配器都覆盖不到这条路径，因此新增 **openai-responses** 通道类型
+（src/provider/openai-responses.ts）：
+
+- sizeStyle 固定 pixels（尺寸在工具对象里）；
+- 负向清单折进 input（无原生负向字段）；
+- 参考图走 input 的 parts 形态（input_text + input_image）；
+- 解析 output[].image_generation_call，失败状态抛 TASK_FAILED，无该字段抛 BAD_RESPONSE（带上游原因）；
+- 额外记录 image_tokens 与 revised_prompt 供成本核算。
+
+11 项单测覆盖请求体形态、协议解析、错误路径与探测；全量 **120 项全绿**。
+
+### 6.4 走插件的真实端到端
+
+| 步骤 | 实测 |
+|---|---|
+| 注册通道 | 回包 apiKey: sk-••••siA、hasKey: true、sizeStyle: pixels；vault -rw------- |
+| channels.probe（不实跑） | ok / auth=ok / endpoint=responses-images / models=13 |
+| /generate 真实出图 | HTTP 200，37.9s，1024x1536，1.62 MB，报价 exact ¥0.02（通道覆盖价） |
+| 产物 | docs/evidence/m2-real-tianyuai-gpt-image-2.png |
+
+用的是一个完整 ImagePrompt v1（cinematic 三格 + 角色表 + 中文对白 + 负面清单）。结果：
+
+- 编译器分段全部落进真实提示词（STYLE → SUBJECT → COMPOSITION → …）；
+- **中文对白「时间戳怎么全一样？」逐字正确渲染** —— 设计里列为最高风险的「中文出字」在这一档模型上成立；
+- 角色表特征（齐刘海 / 圆眼镜 / 深灰卫衣）与 dramatic 冷光色调都对齐；
+- 日志面板里的时间戳被画成完全相同的值，说明主体描述被准确理解。
+
+### 6.5 密钥处置
+
+密钥只写入插件 vault（.scratch/real-home/vault.json，0600，已 gitignore）；
+提交前双向核验：**工作树与暂存区均无密钥字面量**。
+另需提醒：该密钥在对话里出现过明文，建议在中转后台轮换一次。
+
+## 7. 已知限制
+
+- ~~真实通道只用桩 fetch 验证过协议路径；没有对真实第三方端点做过付费实跑~~ → 见 §6（已用真实密钥完成付费实跑）。
 - QiLin 真机仍未启动（M1 起挂账）；双通道装配已就绪，M3 一并补。
 - `img_generate` 的确认闸门目前是「工具返回确认请求 → 模型带 confirm=true 重调」，尚未接宿主原生 ask 通道。
 - 参考图（图像锁）已具备注入能力但尚无调用方（M3 知识漫画接入）。

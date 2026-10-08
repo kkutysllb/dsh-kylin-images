@@ -52,6 +52,13 @@ export const BUILTIN_MODELS: readonly ModelSpec[] = [
     note: '聚合站比例+分辨率契约（size=1:1, resolution=1k）；产物为带 expires_at 的签名 URL，必须立刻落盘',
   },
   {
+    match: ['gpt-image-2.5', 'gpt-image-2-4k'],
+    sizeStyle: 'pixels',
+    supportsNegative: false, supportsReferenceImage: true, supportsSeed: false,
+    price: null,
+    note: '中转站命名的新一代图像模型（实测走 Responses API 的 image_generation 工具）；价目随站点差异大，未内置',
+  },
+  {
     match: ['gpt-image-1.5', 'gpt-image-1', 'gpt-image', 'dall-e'],
     sizeStyle: 'pixels',
     supportsNegative: false, supportsReferenceImage: true, supportsSeed: false,
@@ -160,14 +167,14 @@ export function defaultModelForKind(kind: string): string {
 
 /** 通道类型给出的尺寸风格缺省（优先于模型建议）。 */
 export function defaultSizeStyleForKind(kind: string): SizeStyle {
-  if (kind === 'openai-images') return 'pixels'
+  if (kind === 'openai-images' || kind === 'openai-responses') return 'pixels'
   return 'ratio-resolution'
 }
 
 export function effectiveSizeStyle(channelSizeStyle: SizeStyle | undefined, kind: string, model: string | undefined): SizeStyle {
   if (channelSizeStyle !== undefined) return channelSizeStyle
+  if (kind === 'openai-images' || kind === 'openai-responses') return 'pixels'
   const spec = inferModel(model)
-  if (kind === 'openai-images') return 'pixels'
   if (spec !== undefined) return spec.sizeStyle
   return defaultSizeStyleForKind(kind)
 }

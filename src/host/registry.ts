@@ -4,6 +4,7 @@
  */
 import { MockProvider } from '../provider/mock.ts'
 import { OpenAiImagesProvider } from '../provider/openai-images.ts'
+import { OpenAiResponsesProvider } from '../provider/openai-responses.ts'
 import { TaskImagesProvider } from '../provider/task-images.ts'
 import { ResultCache } from '../store/cache.ts'
 import { effectiveSizeStyle } from '../provider/catalog.ts'
@@ -28,6 +29,7 @@ export function createRuntime(home: string = resolvePluginHome()): PluginRuntime
   const providers = new Map<ChannelKind, ImageProvider>()
   providers.set('mock', new MockProvider())
   providers.set('openai-images', new OpenAiImagesProvider())
+  providers.set('openai-responses', new OpenAiResponsesProvider())
   providers.set('task-images', new TaskImagesProvider())
   const cache = new ResultCache(home)
   return {
@@ -38,7 +40,7 @@ export function createRuntime(home: string = resolvePluginHome()): PluginRuntime
     providerFor(channel: ChannelRecord): ImageProvider {
       const provider = providers.get(channel.kind)
       if (provider === undefined) {
-        throw new Error('通道类型 ' + channel.kind + ' 没有可用适配器（可选：mock / openai-images / task-images）')
+        throw new Error('通道类型 ' + channel.kind + ' 没有可用适配器（可选：mock / openai-images / openai-responses / task-images）')
       }
       return provider
     },

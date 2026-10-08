@@ -7,7 +7,7 @@
 import type { SizeStyle } from '../prompt/sizes.ts'
 import type { HttpOptions } from './http.ts'
 
-export const CHANNEL_KINDS = ['mock', 'openai-images', 'task-images'] as const
+export const CHANNEL_KINDS = ['mock', 'openai-images', 'openai-responses', 'task-images'] as const
 export type ChannelKind = (typeof CHANNEL_KINDS)[number]
 
 export interface ChannelPricing {
@@ -55,6 +55,8 @@ export interface GenerateRequest {
   resolution?: string | undefined
   /** 单次生成的图片数量（MVP 上限 4）。 */
   count?: number | undefined
+  /** 质量档位（low/medium/high/auto）；按通道能力生效。 */
+  quality?: string | undefined
   seed?: number | undefined
   /** 参考图本地路径（跨页一致性用；仅在通道能力允许时注入）。 */
   referenceImages?: string[] | undefined
@@ -101,7 +103,7 @@ export interface ProbeResult {
   /** 鉴权结论：ok / invalid / unknown（部分中转不校验 /models 的 token）。 */
   auth: 'ok' | 'invalid' | 'unknown'
   models: string[]
-  endpointStyle: 'sync-images' | 'task-images'
+  endpointStyle: 'sync-images' | 'task-images' | 'responses-images'
   sizeStyle: SizeStyle
   /** 小额实跑结论（未跑时为 undefined）。 */
   realRun?: { tried: boolean; ok: boolean; note: string } | undefined

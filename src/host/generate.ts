@@ -188,6 +188,7 @@ export async function runGeneration(runtime: PluginRuntime, input: GenerationInp
       resolution: composed.size.resolution,
       count,
       seed,
+      quality: settings.defaultQuality,
       referenceImages: input.referenceImages === undefined ? undefined : [...input.referenceImages],
       outputDir,
       fileStem,
