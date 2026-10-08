@@ -123,6 +123,71 @@ window.__ModuleLoader__.load({
       return lang[key] || key;
     }
 
+    /* ── 设置页导航字形 ────────────────────────────────────────────
+     * 宿主 settings.section 契约只投影 id/order/label，导航图标由壳层统一
+     * 渲染通用字形。做法（同 dsh-super-ppts 的已验证实现）：按本地化文案
+     * 标记本插件的导航行，再用注入 CSS 隐藏壳层 SVG、以 currentColor mask
+     * 画自定义字形；MutationObserver 跟随语言切换与弹窗重开，disposer 清标记。
+     * 缺 DOM/Observer 时为空操作。
+     */
+    var NAV_VISION = 'data-kimg-nav-vision';
+    var NAV_COMIC = 'data-kimg-nav-comic';
+
+    // 视觉模型：图像框 + 火花（生成）——与相机/齿轮区分开
+    var NAV_VISION_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='4.5' width='16' height='16' rx='2.5'/%3E%3Ccircle cx='7.6' cy='10.2' r='1.6'/%3E%3Cpath d='M2.5 17.6l4.1-4.1a2 2 0 0 1 2.8 0l4 4'/%3E%3Cpath d='M20 2.5v4.4M17.8 4.7h4.4'/%3E%3C/svg%3E";
+    // 图像工坊：漫画分格页（上通栏 + 下两格）——与列表/网格类图标区分开
+    var NAV_COMIC_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='2.5' width='19' height='19' rx='2.5'/%3E%3Cpath d='M2.5 11.5h19'/%3E%3Cpath d='M12 11.5v10'/%3E%3C/svg%3E";
+
+    // 宿主不同代次把设置导航放在不同容器里：按序尝试，命中即止。
+    var NAV_SELECTORS = ['[role="dialog"] nav button', 'nav button', '[role="dialog"] button'];
+
+    function navButtons() {
+      for (var index = 0; index < NAV_SELECTORS.length; index += 1) {
+        var found = document.querySelectorAll(NAV_SELECTORS[index]);
+        if (found && found.length > 0) return found;
+      }
+      return [];
+    }
+
+    function registerNavIcon(label, marker) {
+      if (typeof document === 'undefined' || typeof MutationObserver === 'undefined') return function () {};
+      var disposed = false;
+      function sync() {
+        if (disposed) return;
+        var current = '';
+        try { current = String(label() || '').trim(); } catch (error) { current = ''; }
+        var buttons = navButtons();
+        for (var index = 0; index < buttons.length; index += 1) {
+          var button = buttons[index];
+          var matches = current.length > 0 && String(button.textContent || '').trim() === current;
+          if (matches) button.setAttribute(marker, '');
+          else button.removeAttribute(marker);
+        }
+      }
+      sync();
+      var observer = new MutationObserver(sync);
+      observer.observe(document.body, { childList: true, subtree: true, characterData: true });
+      return function () {
+        disposed = true;
+        observer.disconnect();
+        var marked = document.querySelectorAll('[' + marker + ']');
+        for (var index = 0; index < marked.length; index += 1) marked[index].removeAttribute(marker);
+      };
+    }
+
+    /** 两个设置页菜单各自换字形；返回组合 disposer。 */
+    function registerNavIcons() {
+      var disposers = [
+        registerNavIcon(function () { return t('nav'); }, NAV_VISION),
+        registerNavIcon(function () { return t('workbench'); }, NAV_COMIC),
+      ];
+      return function () {
+        for (var index = 0; index < disposers.length; index += 1) {
+          try { disposers[index](); } catch (error) { /* 卸载期异常忽略 */ }
+        }
+      };
+    }
+
     function ensureStyles() {
       if (typeof document === 'undefined') return null;
       if (document.getElementById(STYLE_ID) !== null) return null;
@@ -146,6 +211,18 @@ window.__ModuleLoader__.load({
         '.kimg-actions button[disabled]{opacity:.45;cursor:default}',
         '.kimg-state{font-size:12px;opacity:.66}',
         '.kimg-state[data-kind=error]{color:var(--dsw-alias-text-danger, #d9534f);opacity:1}',
+        // 设置页导航字形：隐藏壳层 SVG，用 ::before + mask 画自定义字形
+        // 壳层字形可能直接是子元素，也可能被一层 span 包着：两种都隐藏
+        '[' + NAV_VISION + '] > svg:first-child,'
+          + '[' + NAV_VISION + '] > span:first-child > svg:first-child{display:none;}',
+        '[' + NAV_VISION + ']::before{content:\'\';flex:none;width:16px;height:16px;background:currentColor;'
+          + '-webkit-mask:url("' + NAV_VISION_SVG + '") center / contain no-repeat;'
+          + 'mask:url("' + NAV_VISION_SVG + '") center / contain no-repeat;}',
+        '[' + NAV_COMIC + '] > svg:first-child,'
+          + '[' + NAV_COMIC + '] > span:first-child > svg:first-child{display:none;}',
+        '[' + NAV_COMIC + ']::before{content:\'\';flex:none;width:16px;height:16px;background:currentColor;'
+          + '-webkit-mask:url("' + NAV_COMIC_SVG + '") center / contain no-repeat;'
+          + 'mask:url("' + NAV_COMIC_SVG + '") center / contain no-repeat;}',
       ].join('');
       document.head.appendChild(style);
       return function () { if (style.parentNode) style.parentNode.removeChild(style); };
@@ -439,6 +516,12 @@ window.__ModuleLoader__.load({
       if (removeStyles !== null && ctx && typeof ctx.effect === 'function') {
         ctx.effect(function () { return removeStyles; }, 'dsh-kylin-images: settings styles');
       }
+      // 设置页导航字形不依赖 slots（只需 DOM + effect），因此放在 slots 守卫之前：
+      // 宿主缺 slots 时字形仍应生效，否则会退回壳层的通用字形。
+      if (ctx && typeof ctx.effect === 'function') {
+        ctx.effect(registerNavIcons, 'dsh-kylin-images: settings nav icons');
+      }
+
       if (!ctx || !ctx.slots || typeof ctx.slots.inject !== 'function') return;
 
       function bindSeat(seat, options, component, label) {

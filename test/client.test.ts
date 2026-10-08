@@ -84,6 +84,85 @@ test('客户端不再注册任何 workspace 侧边栏座席', () => {
   assert.ok(!source.includes('sidebar.panellist'), '不得注册 sidebar.panellist')
 })
 
+test('设置页导航字形：两个菜单各一个语义字形，且互相不同', () => {
+  assert.ok(source.includes('data-kimg-nav-vision'))
+  assert.ok(source.includes('data-kimg-nav-comic'))
+  const vision = /NAV_VISION_SVG = "([^"]+)"/.exec(source)?.[1] ?? ''
+  const comic = /NAV_COMIC_SVG = "([^"]+)"/.exec(source)?.[1] ?? ''
+  assert.ok(vision.startsWith('data:image/svg+xml,'), '视觉模型字形应为内联 SVG')
+  assert.ok(comic.startsWith('data:image/svg+xml,'), '图像工坊字形应为内联 SVG')
+  assert.notEqual(vision, comic, '两个菜单不得共用同一个字形')
+  assert.ok(!vision.includes('circle cx="12" cy="12" r="3"'), '不应退回通用相机/齿轮')
+  // 换字形的两条 CSS 规则都要在（隐藏壳层 SVG + ::before mask）
+  assert.ok(source.includes('> svg:first-child,'))
+  assert.ok(source.includes('> span:first-child > svg:first-child{display:none;}'), '壳层字形可能被 span 包一层')
+  assert.ok(source.includes('mask:url('))
+})
+
+test('导航行标记逻辑：按本地化文案命中，语言切换后重新标记', () => {
+  const buttons = [
+    { textContent: '通用设置', attrs: {} },
+    { textContent: '视觉模型', attrs: {} },
+    { textContent: '图像工坊', attrs: {} },
+  ].map((item) => ({
+    textContent: item.textContent,
+    attrs: item.attrs as Record<string, string>,
+    setAttribute(name: string) { (this.attrs as Record<string, string>)[name] = '' },
+    removeAttribute(name: string) { delete (this.attrs as Record<string, string>)[name] },
+  }))
+  let observerCallback: (() => void) | undefined
+  class FakeObserver {
+    constructor(callback: () => void) { observerCallback = callback }
+    observe() { /* no-op */ }
+    disconnect() { observerCallback = undefined }
+  }
+  const sandbox = {
+    window: {
+      __ModuleLoader__: {
+        load(options: { factory: (require: (name: string) => unknown) => unknown }) {
+          const react = {
+            createElement: () => null,
+            useState: (initial: unknown) => [initial, () => undefined],
+            useEffect: () => undefined,
+            useCallback: (fn: unknown) => fn,
+          }
+          captured = options.factory((name: string) => (name === 'react' ? react : {}))
+        },
+      },
+    },
+    navigator: { language: 'zh-CN' },
+    document: {
+      getElementById: () => null,
+      createElement: () => ({ textContent: '', parentNode: null }),
+      head: { appendChild: () => undefined },
+      body: {},
+      querySelectorAll(selector: string) {
+        if (selector.indexOf('nav button') >= 0) return buttons
+        const match = /^\[([^\]]+)\]$/.exec(selector)
+        if (match === null) return []
+        return buttons.filter((button) => (button.attrs as Record<string, string>)[match[1] as string] !== undefined)
+      },
+    },
+    MutationObserver: FakeObserver,
+    console,
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({ ok: true, value: {} }) }),
+  }
+  let captured: unknown
+  const source2 = readFileSync(join(ROOT, 'client.js'), 'utf8')
+  vm.runInNewContext(source2, sandbox, { filename: 'client.js' })
+  const mod = captured as { apply: (ctx: unknown) => void }
+  const disposers: Array<() => void> = []
+  mod.apply({
+    effect: (register: () => unknown) => { const dispose = register(); if (typeof dispose === 'function') disposers.push(dispose as () => void); return dispose },
+  })
+  assert.ok(buttons[1]?.attrs['data-kimg-nav-vision'] !== undefined, '「视觉模型」行应被标记')
+  assert.ok(buttons[2]?.attrs['data-kimg-nav-comic'] !== undefined, '「图像工坊」行应被标记')
+  assert.equal(buttons[0]?.attrs['data-kimg-nav-vision'], undefined, '别人的行不得被标记')
+  assert.equal(typeof observerCallback, 'function', '应挂 MutationObserver 跟随语言/重开')
+  for (const dispose of disposers) dispose()
+  assert.equal(buttons[1]?.attrs['data-kimg-nav-vision'], undefined, 'disposer 应清除标记')
+})
+
 test('宿主缺插槽时不抛异常（软探测）', () => {
   const mod = loadClient()
   assert.doesNotThrow(() => mod.apply({}))
