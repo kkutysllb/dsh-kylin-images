@@ -139,7 +139,14 @@ window.__ModuleLoader__.load({
     var NAV_COMIC_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='2.5' width='19' height='19' rx='2.5'/%3E%3Cpath d='M2.5 11.5h19'/%3E%3Cpath d='M12 11.5v10'/%3E%3C/svg%3E";
 
     // 宿主不同代次把设置导航放在不同容器里：按序尝试，命中即止。
-    var NAV_SELECTORS = ['[role="dialog"] nav button', 'nav button', '[role="dialog"] button'];
+    // 已对当前宿主源码核实：设置面板为 body 门户模态（role=dialog + aria-modal=true），
+    // 导航结构 <nav> > div.navList > button.navCell > svg.navIcon(首个子元素) + span.navLabel。
+    var NAV_SELECTORS = [
+      '[role="dialog"] nav button',
+      '[aria-modal="true"] nav button',
+      'nav button',
+      '[role="dialog"] button',
+    ];
 
     function navButtons() {
       for (var index = 0; index < NAV_SELECTORS.length; index += 1) {
