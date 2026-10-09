@@ -11,6 +11,7 @@ import { loadLibrary, searchLibrary } from '../library/store.ts'
 import type { Library } from '../library/store.ts'
 import { describeError } from '../provider/errors.ts'
 import { describeQuote } from '../provider/pricing.ts'
+import { describeRoute } from '../provider/route-probe.ts'
 import { readSpend, summarizeSpend } from '../store/spend.ts'
 import { runBatch, runGeneration } from '../host/generate.ts'
 import { listProjects, runComicAction } from '../comic/service.ts'
@@ -84,7 +85,7 @@ function channelsTool(runtime: PluginRuntime): ToolDefinition {
   return {
     name: 'img_channels',
     output: stringOutput('图像通道'),
-    description: '查看图像生成通道的配置与健康状态（密钥一律脱敏）；test=连通性自检，probe=完整探测（模型枚举 + 鉴权 + 端点风格，可选小额实跑）。',
+    description: '查看图像生成通道的配置与健康状态（密钥一律脱敏）；test=连通性自检，probe=完整探测（模型枚举 + 鉴权 + 端点可达性 + 端点风格，可选小额实跑）。两者的端点可达性探测均为零成本：用不存在的哨兵模型发必然失败的请求，不会出图、不产生费用。',
     parameters: {
       type: 'object',
       properties: {
@@ -103,21 +104,25 @@ function channelsTool(runtime: PluginRuntime): ToolDefinition {
         const provider = runtime.providerFor(channel)
         if (action === 'probe' && provider.probe !== undefined) {
           const result = await provider.probe(channel, { realRun: args['realRun'] === true })
-          return [
+          const lines = [
             '通道 ' + channel.id + '（' + channel.label + '）探测' + (result.ok ? '通过' : '未通过'),
             '鉴权：' + result.auth + '，端点风格：' + result.endpointStyle + '，尺寸风格：' + result.sizeStyle,
             '模型数：' + String(result.models.length) + (result.models.length === 0 ? '' : '（' + result.models.slice(0, 12).join(', ') + '）'),
             '结论：' + result.detail,
-            result.realRun === undefined ? '小额实跑：未执行' : '小额实跑：' + (result.realRun.ok ? '成功' : '失败') + ' — ' + result.realRun.note,
-          ].join(String.fromCharCode(10))
+          ]
+          if (result.route !== undefined) lines.push(describeRoute(result.route))
+          lines.push(result.realRun === undefined ? '小额实跑：未执行' : '小额实跑：' + (result.realRun.ok ? '成功' : '失败') + ' — ' + result.realRun.note)
+          return lines.join(String.fromCharCode(10))
         }
         const health = await provider.health(channel)
-        return [
+        const lines = [
           '通道 ' + channel.id + '（' + channel.label + '）自检' + (health.ok ? '通过' : '失败'),
           '类型：' + channel.kind + '，尺寸风格：' + health.sizeStyle,
           '可用模型：' + health.models.join(', '),
           '结论：' + health.detail,
-        ].join(String.fromCharCode(10))
+        ]
+        if (health.route !== undefined) lines.push(describeRoute(health.route))
+        return lines.join(String.fromCharCode(10))
       }
       const settings = runtime.vault.settings()
       const channels = runtime.vault.publicList()

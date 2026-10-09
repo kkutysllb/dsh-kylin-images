@@ -18,6 +18,7 @@ export type ImageErrorCode =
   | 'BAD_RESPONSE'
   | 'TASK_FAILED'
   | 'URL_EXPIRED'
+  | 'ENDPOINT_BLOCKED'
 
 /** 可重试的错误：退避后再试有意义。 */
 const RETRYABLE: readonly ImageErrorCode[] = ['RATE_LIMITED', 'UNAVAILABLE', 'TIMEOUT', 'NETWORK']
@@ -71,8 +72,23 @@ function textOf(body: unknown): string {
     .toLowerCase()
 }
 
+/**
+ * 响应体是不是前置代理/反代的 HTML 错误页。
+ *
+ * 真机实证：某些中转站的 nginx 把 /v1/images/generations 整个 403 掉，
+ * 返回 HTML 而不是 API JSON；另一条 /v1/responses 却完全正常。
+ * 这种 403 与「Key 无效」在 HTTP 层一模一样，必须靠响应体区分，
+ * 否则会把配置问题误报成凭据问题，把用户引到错误的方向。
+ */
+function looksLikeGatewayHtml(body: unknown): boolean {
+  if (typeof body !== 'string' || body === '') return false
+  const head = body.trim().slice(0, 240).toLowerCase()
+  return head.startsWith('<') || head.includes('<html') || head.includes('<!doctype')
+}
+
 /** 从 HTTP 状态 + 响应体判定错误码。 */
 export function classifyStatus(status: number, body: unknown): ImageErrorCode {
+  if (status >= 400 && looksLikeGatewayHtml(body)) return 'ENDPOINT_BLOCKED'
   const text = textOf(body)
   if (status === 401 || status === 403) {
     if (text.includes('moderation') || text.includes('safety')) return 'REQUEST_REJECTED'
@@ -133,6 +149,7 @@ export function describeError(error: unknown): string {
     BAD_RESPONSE: '响应结构无法识别，确认该通道的端点风格（同步 / 异步任务）',
     TASK_FAILED: '异步任务失败，查看上游返回的失败原因',
     URL_EXPIRED: '产物签名 URL 已过期，请重新生成',
+    ENDPOINT_BLOCKED: '该路径被站点前置代理拦截（返回 HTML 而非 API JSON），通常不是 Key 问题：换用另一端点风格（如 openai-responses），或核对 Base URL 与路径前缀。可用 img_channels action=probe 做零成本端点探测',
   }
   const parts = ['[' + error.code + '] ' + error.message]
   if (error.status !== undefined) parts.push('HTTP ' + String(error.status))

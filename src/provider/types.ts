@@ -6,6 +6,7 @@
  */
 import type { SizeStyle } from '../prompt/sizes.ts'
 import type { HttpOptions } from './http.ts'
+import type { RouteReport } from './route-probe.ts'
 
 export const CHANNEL_KINDS = ['mock', 'openai-images', 'openai-responses', 'task-images'] as const
 export type ChannelKind = (typeof CHANNEL_KINDS)[number]
@@ -96,6 +97,8 @@ export interface ProviderHealth {
   detail: string
   models: string[]
   sizeStyle: SizeStyle
+  /** 端点可达性证据（零成本探测）；通道未配置 Base URL 时为 undefined。 */
+  route?: RouteReport | undefined
 }
 
 export interface ProbeResult {
@@ -107,6 +110,8 @@ export interface ProbeResult {
   sizeStyle: SizeStyle
   /** 小额实跑结论（未跑时为 undefined）。 */
   realRun?: { tried: boolean; ok: boolean; note: string } | undefined
+  /** 端点可达性证据（零成本探测），避免只看 /v1/models 的假绿灯。 */
+  route?: RouteReport | undefined
   detail: string
 }
 

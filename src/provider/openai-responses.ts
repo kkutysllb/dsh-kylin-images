@@ -21,6 +21,8 @@ import { DEFAULT_RETRIES, DEFAULT_TIMEOUT_MS, asUrlList, downloadToFile, pickPat
 import type { HttpOptions } from './http.ts'
 import { effectiveSizeStyle, resolveModelSpec } from './catalog.ts'
 import { OPENAI_MODELS_PATH, foldNegative, resolveEndpoint } from './openai-images.ts'
+import { isRouted, probeRoutes, routeStateLabel } from './route-probe.ts'
+import type { RouteReport } from './route-probe.ts'
 import type { ChannelRecord, GenerateRequest, GenerateResult, GeneratedImage, ImageProvider, ProbeResult, ProviderHealth } from './types.ts'
 
 export const RESPONSES_PATH = '/v1/responses'
@@ -134,15 +136,26 @@ export class OpenAiResponsesProvider implements ImageProvider {
       const models = Array.isArray(data)
         ? data.map((item) => (isRecord(item) ? String(item['id'] ?? '') : String(item))).filter((id) => id !== '')
         : []
+      const route = await this.routeReport(channel, http)
+      const blocked = !isRouted(route.responses.state)
+      const routeNote = blocked
+        ? '；但生成端点 ' + route.responses.path + ' 不可用（HTTP ' + String(route.responses.status) + '，' + routeStateLabel(route.responses.state) + '），实际出图会失败。' + (route.advice === '' ? '' : route.advice)
+        : '；生成端点 ' + route.responses.path + ' 可达（HTTP ' + String(route.responses.status) + '）'
       return {
-        ok: true,
-        detail: 'Responses 图像通道：/v1/models 可达（返回 ' + String(models.length) + ' 个模型）；生成走 ' + RESPONSES_PATH,
+        ok: !blocked,
+        detail: 'Responses 图像通道：/v1/models 可达（返回 ' + String(models.length) + ' 个模型）' + routeNote,
         models: models.length > 0 ? models : channel.models,
         sizeStyle,
+        route,
       }
     } catch (error) {
       return { ok: false, detail: error instanceof Error ? error.message : String(error), models: channel.models, sizeStyle }
     }
+  }
+
+  /** 零成本端点可达性探测：绝不出图（哨兵模型）。 */
+  private async routeReport(channel: ChannelRecord, http?: HttpOptions): Promise<RouteReport> {
+    return await probeRoutes(channel, this.headers(channel), { ...timeoutOf(channel, http), retries: 0 })
   }
 
   async probe(channel: ChannelRecord, options: { realRun?: boolean; http?: HttpOptions; outputDir?: string } = {}): Promise<ProbeResult> {
@@ -167,6 +180,16 @@ export class OpenAiResponsesProvider implements ImageProvider {
       const code = error instanceof ImageProviderError ? error.code : 'REQUEST_FAILED'
       result.auth = code === 'API_KEY_INVALID' || code === 'BALANCE_REQUIRED' ? 'invalid' : 'unknown'
       result.detail = '探测失败：' + (error instanceof Error ? error.message : String(error))
+    }
+    // 与同步通道同理：只看 /v1/models 会给假绿灯，必须实测生成路径的路由。
+    const route = await this.routeReport(channel, options.http)
+    result.route = route
+    if (route.advice !== '') {
+      result.ok = false
+      result.detail = result.detail + '；' + route.advice
+    } else if (!isRouted(route.responses.state) && result.ok) {
+      result.ok = false
+      result.detail = result.detail + '；但生成端点 ' + route.responses.path + ' 不可用（' + routeStateLabel(route.responses.state) + '），实际出图会失败。'
     }
     if (options.realRun === true) {
       try {

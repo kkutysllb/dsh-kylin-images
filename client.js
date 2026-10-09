@@ -70,6 +70,12 @@ window.__ModuleLoader__.load({
       retry: '重试',
       noKey: '未配置',
       saved: '已保存',
+      kindHint: {
+        'openai-images': '同步出图：POST /v1/images/generations',
+        'openai-responses': 'Responses 出图：POST /v1/responses + image_generation（不少中转只放行这一条）',
+        'task-images': '异步任务：提交后轮询任务状态',
+        mock: '本地模拟：零密钥跑通全链路',
+      },
     };
     var en = {
       nav: 'Vision model',
@@ -116,6 +122,12 @@ window.__ModuleLoader__.load({
       retry: 'Retry',
       noKey: 'not set',
       saved: 'Saved',
+      kindHint: {
+        'openai-images': 'Sync images: POST /v1/images/generations',
+        'openai-responses': 'Responses images: POST /v1/responses + image_generation (many relays only allow this one)',
+        'task-images': 'Async task: submit, then poll task status',
+        mock: 'Local mock: exercise the whole chain with zero keys',
+      },
     };
 
     function t(key) {
@@ -250,6 +262,19 @@ window.__ModuleLoader__.load({
       return String(text || '').split(/[,\n]/).map(function (part) { return part.trim(); }).filter(function (part) { return part !== ''; });
     }
 
+    /* 通道类型的可选值与本地化说明。openai-responses 曾漏配：
+     * 真机上把站点只放行的 Responses 路径直接变成「不可选」，用户被迫选了同步出图，
+     * 结果一出图就是 403 HTML。类型清单必须与 src/provider/types.ts 的 CHANNEL_KINDS 对齐。 */
+    var KIND_VALUES = ['openai-images', 'openai-responses', 'task-images', 'mock'];
+
+    function kindOptions() {
+      var hints = t('kindHint') || {};
+      return KIND_VALUES.map(function (value) {
+        var hint = hints[value];
+        return { value: value, label: hint ? value + ' — ' + hint : value };
+      });
+    }
+
     function VisionModelCard() {
       var stateHook = React.useState({ status: 'loading', channels: [], settings: null, spend: null, error: null });
       var snapshot = stateHook[0];
@@ -341,6 +366,7 @@ window.__ModuleLoader__.load({
                         var value = payload && payload.value;
                         if (value) {
                           var summary = channel.id + ': 鉴权=' + (value.auth || 'unknown') + ' · 端点=' + (value.endpointStyle || '-') + ' · 模型 ' + ((value.models || []).length) + ' 个';
+                          if (value.route) summary += ' · ' + value.route.images.path + '=' + value.route.images.state + ' · ' + value.route.responses.path + '=' + value.route.responses.state;
                           if (value.realRun) summary += ' · 实跑' + (value.realRun.ok ? '成功' : '失败');
                           setNotice({ kind: payload && payload.ok ? 'ok' : 'error', text: summary + ' — ' + (value.detail || '') });
                         } else {
@@ -359,7 +385,7 @@ window.__ModuleLoader__.load({
           React.createElement('h3', null, t('addChannel')),
           React.createElement('div', { className: 'kimg-grid' },
             field('label', t('label'), draft.label, function (value) { setDraft(Object.assign({}, draft, { label: value })); }),
-            select('kind', t('kind'), draft.kind, ['mock', 'openai-images', 'task-images'], function (value) { setDraft(Object.assign({}, draft, { kind: value })); }),
+            select('kind', t('kind'), draft.kind, kindOptions(), function (value) { setDraft(Object.assign({}, draft, { kind: value })); }),
             field('baseUrl', t('baseUrl'), draft.baseUrl, function (value) { setDraft(Object.assign({}, draft, { baseUrl: value })); }),
             field('apiKey', t('apiKey'), draft.apiKey, function (value) { setDraft(Object.assign({}, draft, { apiKey: value })); }, 'password'),
             field('models', t('models'), draft.models, function (value) { setDraft(Object.assign({}, draft, { models: value })); }),
@@ -415,7 +441,9 @@ window.__ModuleLoader__.load({
           value: value === undefined || value === null ? '' : value,
           onChange: function (event) { onChange(event.target.value); },
         }, options.map(function (option) {
-          return React.createElement('option', { key: option, value: option }, option);
+          var optionValue = (typeof option === 'object' && option !== null) ? option.value : option;
+          var optionLabel = (typeof option === 'object' && option !== null) ? (option.label || option.value) : option;
+          return React.createElement('option', { key: optionValue, value: optionValue }, optionLabel);
         })));
     }
 

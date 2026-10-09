@@ -12,30 +12,12 @@ import { ImageProviderError } from './errors.ts'
 import { DEFAULT_RETRIES, DEFAULT_TIMEOUT_MS, asUrlList, downloadToFile, pickPath, requestJson, writeBase64Image } from './http.ts'
 import type { HttpOptions } from './http.ts'
 import { effectiveSizeStyle, resolveModelSpec } from './catalog.ts'
+import { OPENAI_IMAGES_PATH, OPENAI_MODELS_PATH, joinUrl, resolveEndpoint } from './endpoint.ts'
+import { isRouted, probeRoutes, routeStateLabel } from './route-probe.ts'
+import type { RouteReport } from './route-probe.ts'
 import type { ChannelRecord, GenerateRequest, GenerateResult, GeneratedImage, ImageProvider, ProbeResult, ProviderHealth } from './types.ts'
 
-export const OPENAI_IMAGES_PATH = '/v1/images/generations'
-export const OPENAI_MODELS_PATH = '/v1/models'
-
-export function joinUrl(base: string, path: string): string {
-  const left = base.replace(/\/+$/, '')
-  const right = path.startsWith('/') ? path : '/' + path
-  return left + right
-}
-
-/** 端点解析：显式 endpointPath 优先；否则用缺省路径，并避免与 baseUrl 里的 /v1 重复。 */
-/**
- * 端点解析。
- *
- * baseUrl 与路径都可能带 /v1（用户填 https://host/v1 是常见写法），两端只保留一个，
- * 否则会拼出 /v1/v1/... —— 这是真机之外单测抓到过的实际缺陷。
- */
-export function resolveEndpoint(baseUrl: string, endpointPath: string | undefined, fallback: string): string {
-  const path = typeof endpointPath === 'string' && endpointPath.trim() !== '' ? endpointPath.trim() : fallback
-  const base = baseUrl.replace(/\/+$/, '')
-  if (/\/v1$/.test(base) && path.startsWith('/v1/')) return base + path.slice(3)
-  return joinUrl(base, path)
-}
+export { OPENAI_IMAGES_PATH, OPENAI_MODELS_PATH, joinUrl, resolveEndpoint }
 
 function mimeOf(path: string): string {
   const extension = extname(path).toLowerCase()
@@ -96,22 +78,32 @@ export class OpenAiImagesProvider implements ImageProvider {
     if (channel.baseUrl === '') {
       return { ok: false, detail: '通道未配置 Base URL', models: channel.models, sizeStyle }
     }
+    let models = channel.models
+    let catalogNote = ''
     try {
       const response = await requestJson(
         resolveEndpoint(channel.baseUrl, undefined, OPENAI_MODELS_PATH),
         { method: 'GET', headers: this.headers(channel) },
         timeoutOf(channel, http),
       )
-      const models = describeModels(response.body)
-      return {
-        ok: true,
-        detail: 'GET /v1/models 可达，返回 ' + String(models.length) + ' 个模型（该端点未必校验 token，鉴权结论请用「测试通道」探测）',
-        models: models.length > 0 ? models : channel.models,
-        sizeStyle,
-      }
+      const found = describeModels(response.body)
+      models = found.length > 0 ? found : channel.models
+      catalogNote = 'GET /v1/models 可达，返回 ' + String(found.length) + ' 个模型（该端点未必校验 token）'
     } catch (error) {
       return { ok: false, detail: error instanceof Error ? error.message : String(error), models: channel.models, sizeStyle }
     }
+    // /v1/models 通不代表能出图：很多站的生成路径被前置代理单独拦掉，必须另测路由。
+    const route = await this.routeReport(channel, http)
+    const blocked = !isRouted(route.images.state)
+    const routeNote = blocked
+      ? '；但生成端点 ' + route.images.path + ' 不可用（HTTP ' + String(route.images.status) + '，' + routeStateLabel(route.images.state) + '），实际出图会失败。' + (route.advice === '' ? '' : route.advice)
+      : '；生成端点 ' + route.images.path + ' 可达（HTTP ' + String(route.images.status) + '）'
+    return { ok: !blocked, detail: catalogNote + routeNote, models, sizeStyle, route }
+  }
+
+  /** 零成本端点可达性探测：绝不出图（哨兵模型）。 */
+  private async routeReport(channel: ChannelRecord, http?: HttpOptions): Promise<RouteReport> {
+    return await probeRoutes(channel, this.headers(channel), { ...timeoutOf(channel, http), retries: 0 })
   }
 
   async probe(channel: ChannelRecord, options: { realRun?: boolean; http?: HttpOptions; outputDir?: string } = {}): Promise<ProbeResult> {
@@ -140,6 +132,17 @@ export class OpenAiImagesProvider implements ImageProvider {
       const code = error instanceof ImageProviderError ? error.code : 'REQUEST_FAILED'
       base.auth = code === 'API_KEY_INVALID' || code === 'BALANCE_REQUIRED' ? 'invalid' : 'unknown'
       base.detail = 'GET /v1/models 失败：' + (error instanceof Error ? error.message : String(error))
+    }
+    // 只看 /v1/models 会给出假绿灯：加上零成本路由探测，并据证据修正端点风格。
+    const route = await this.routeReport(channel, options.http)
+    base.route = route
+    if (route.recommended !== 'unknown') base.endpointStyle = route.recommended
+    if (route.advice !== '') {
+      base.ok = false
+      base.detail = (base.detail === '' ? '' : base.detail + '；') + route.advice
+    } else if (!isRouted(route.images.state) && base.ok) {
+      base.ok = false
+      base.detail = base.detail + '；但生成端点 ' + route.images.path + ' 不可用（' + routeStateLabel(route.images.state) + '），实际出图会失败。'
     }
     if (options.realRun === true) {
       try {

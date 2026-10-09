@@ -16,7 +16,7 @@
     cd /path/to/dsh-kylin-images
     npm install
     npm run typecheck     # 期望：无输出（无类型错误）
-    npm test              # 期望：tests 134 / pass 134 / fail 0
+    npm test              # 期望：tests 151 / pass 151 / fail 0
     npm run sync:check    # 期望：上游对账通过 commit 65a9c57a1968
     npm run build         # 期望：生成 lib/
 
@@ -43,6 +43,10 @@
 **验收点 3**：插件详情页出现「视觉模型」配置卡（plugins.bundle.config 座席），
 另有设置页导航「视觉模型」兜底项（settings.section）。卡片能列通道、保存后回显脱敏串。
 
+**验收点 3b**：配置卡的「类型」下拉里**必须能选到 openai-responses**（4 个类型齐全，且各带一句说明）。
+历史缺陷：下拉曾漏掉 openai-responses，导致只能选同步出图，而站点恰好只放行 Responses 路径——
+真机上一出图就是 403 HTML。测试已按服务端 CHANNEL_KINDS 对账防漂移。
+
 ## 3. 配置真实通道
 
 在「视觉模型」卡片里新增通道：
@@ -60,6 +64,17 @@
 
 **验收点 4**：「测试通道」期望 auth=ok、端点=responses-images、模型 13 个。
 不勾「小额实跑」时**不产生任何费用**。
+
+**验收点 4b（端点可达性）**：探测结果里会多出两行「端点可达性」证据，例如：
+
+    端点可达性（零成本探测：哨兵模型，必然失败，不会出图）
+    - /v1/images/generations：gateway-blocked（HTTP 403，被前置代理拦截（返回 HTML，未到 API 层））
+    - /v1/responses：routed（HTTP 503，路由可达（返回 JSON））
+    证据可用的端点风格：responses-images
+
+这两行来自一次**零成本**探测：以不存在的哨兵模型发必然失败的请求，只判「请求有没有到达 API 层」，
+不可能出图、不产生费用。要把类型选成 openai-responses 时，这里会直接给出建议。
+只看 /v1/models 会给假绿灯（该端点甚至不校验 token），这是真机上踩过的坑。
 
 ## 4. 最小出图验证
 
@@ -114,7 +129,7 @@
 | 插件整块消失、无报错 | 启动日志有没有 did not activate；对照 M1 验收记录里的两个激活期陷阱 |
 | 麒麟报「没有声明组合包」 | package.json 的 qilin.bundle.patch 是否被安装包带上（files 白名单） |
 | 配置卡空白 | 浏览器控制台；缺 slots / configForms 服务时会软跳过并打 [dsh-kylin-images] 前缀的 warn |
-| 出图 403 HTML | 端点把 images 路径挡了，确认通道类型是 openai-responses 而不是 openai-images |
+| 出图报 ENDPOINT_BLOCKED / 403 HTML | 端点把 images 路径挡了（前置代理返回 HTML 而非 API JSON）。这是**配置问题不是 Key 问题**：把通道类型改成 openai-responses。用 img_channels action=probe 看零成本端点探测给出的建议 |
 | 出图 401 / 402 | 密钥或余额；img_channels action=test 看具体错误码与建议 |
 | 批量被要求确认 | 成本护栏生效（未知价或超 ¥1 阈值），带 confirm=true 重调即可 |
 | 漫画报「尚未配置通道」 | 默认通道没设；在「视觉模型」里选一个默认通道 |

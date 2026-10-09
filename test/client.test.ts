@@ -174,6 +174,118 @@ test('宿主缺插槽时不抛异常（软探测）', () => {
   assert.doesNotThrow(() => mod.apply(throwing))
 })
 
+test('通道类型选择器覆盖服务端全部 CHANNEL_KINDS（UI 与契约不得漂移）', async () => {
+  const { CHANNEL_KINDS } = await import('../src/provider/types.ts')
+  const match = /KIND_VALUES = \[([^\]]+)\]/.exec(source)
+  assert.ok(match !== null, 'client.js 应有 KIND_VALUES 常量')
+  const values = (match[1] as string)
+    .split(',')
+    .map((part) => part.trim().replace(/^['"]/, '').replace(/['"]$/, ''))
+    .filter((value) => value !== '')
+  // 曾经的缺陷：openai-responses 不在下拉里，用户只能选同步出图，
+  // 而站点恰好只放行了 Responses 路径 —— 真机上一出图就是 403 HTML。
+  assert.deepEqual([...values].sort(), [...CHANNEL_KINDS].sort())
+  assert.ok(values.includes('openai-responses'))
+  // 类型下拉必须是带说明的选项，并且由 kindOptions() 生成
+  assert.ok(source.includes("select('kind', t('kind'), draft.kind, kindOptions()"))
+  assert.ok(source.includes('kindHint'), '选项应带本地化说明，而不是裸 id')
+  // select() 必须支持 { value, label } 形态的选项
+  assert.ok(source.includes('optionValue'))
+})
+
+test('设置页面板真实渲染：类型下拉列出 openai-responses，且渲染不抛异常', async () => {
+  const elements: Array<{ type: unknown; props: Record<string, unknown>; children: unknown[] }> = []
+  const store: unknown[] = []
+  let cursor = 0
+  const effects: Array<() => void> = []
+  const react = {
+    createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => {
+      const node = { type, props: (props || {}) as Record<string, unknown>, children }
+      elements.push(node)
+      return node
+    },
+    useState: (initial: unknown) => {
+      const slot = cursor
+      cursor += 1
+      if (store[slot] === undefined) store[slot] = initial
+      return [
+        store[slot],
+        (next: unknown) => {
+          store[slot] = typeof next === 'function' ? (next as (prev: unknown) => unknown)(store[slot]) : next
+        },
+      ]
+    },
+    useEffect: (fn: () => void) => { effects.push(fn) },
+    useCallback: (fn: unknown) => fn,
+  }
+  const settings = {
+    defaultChannelId: '', defaultModel: '', defaultAspectRatio: '3:4', defaultResolution: '1k',
+    defaultFormat: 'png', defaultCount: 1, concurrency: 2, globalNegative: [], budgetConfirmCny: 10,
+    cacheEnabled: true, cacheDir: '', cacheMaxEntries: 200,
+  }
+  const sandbox = {
+    window: {
+      __ModuleLoader__: {
+        load(options: { factory: (require: (name: string) => unknown) => unknown }) {
+          captured = options.factory((name: string) => (name === 'react' ? react : {}))
+        },
+      },
+    },
+    navigator: { language: 'zh-CN' },
+    document: { getElementById: () => null, createElement: () => ({ textContent: '', parentNode: null }), head: { appendChild: () => undefined } },
+    console,
+    fetch: () => Promise.resolve({
+      json: () => Promise.resolve({ ok: true, value: { channels: [], settings, spend: { total: 0, currency: 'CNY', images: 0, entries: 0 }, cache: { entries: 0, hits: 0, dir: '' }, projects: [] } }),
+    }),
+  }
+  let captured: unknown
+  vm.runInNewContext(readFileSync(join(ROOT, 'client.js'), 'utf8'), sandbox, { filename: 'client.js' })
+  const mod = captured as { apply: (ctx: unknown) => void }
+  const registered: Array<Record<string, unknown>> = []
+  mod.apply({
+    effect: (register: () => unknown) => register(),
+    slots: {
+      inject: (_seat: string, register: () => unknown) => register(),
+      register: (options: Record<string, unknown>, component?: unknown) => {
+        registered.push({ ...options, component })
+        return () => undefined
+      },
+    },
+  })
+  const component = registered[0]?.['component'] as (() => unknown) | undefined
+  assert.equal(typeof component, 'function')
+
+  // 第一遍渲染：loading 态，只挂副作用
+  cursor = 0
+  effects.length = 0
+  component?.()
+  for (const run of effects) run()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+
+  // 第二遍渲染：ready 态，表单全部展开
+  elements.length = 0
+  cursor = 0
+  effects.length = 0
+  assert.doesNotThrow(() => { component?.() }, '设置页面板必须能渲染（kindOptions 未定义之类会炸整页）')
+
+  const optionValues = elements
+    .filter((node) => node.type === 'option')
+    .map((node) => node.props['value'])
+  assert.ok(optionValues.includes('openai-responses'), '类型下拉必须能选到 openai-responses')
+  const responsesOption = elements.find((node) => node.type === 'option' && node.props['value'] === 'openai-responses')
+  const label = String(responsesOption?.children[0] ?? '')
+  assert.ok(label.includes('openai-responses'))
+  assert.ok(label.includes('image_generation'), '选项应带说明，提示这是图片模型的真实形态')
+  // 顺带守住：不能只渲染出空白的根节点
+  assert.ok(elements.length > 20, '应渲染出完整面板')
+})
+
+test('测试通道的结果里带上端点可达性证据', () => {
+  assert.ok(source.includes('value.route.images.path'), '测试通道应显示生成路径的路由结论')
+  assert.ok(source.includes('value.route.responses.state'))
+})
+
 test('卡片走插件自家 fenced API，凭据输入为 password 且源码无密钥字面量', () => {
   assert.ok(source.includes('/dsh-kylin-images/api'))
   assert.ok(!/sk-[a-zA-Z0-9]{8,}/.test(source), 'client.js 不应出现任何形似密钥的字面量')
