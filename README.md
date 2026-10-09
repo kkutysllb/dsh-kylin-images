@@ -84,10 +84,13 @@ cordis.patch.yml 与 client.js；设置表单一处 schema 两处用（Standard 
 ## 快速开始（开发）
 
     npm install
-    npm test              # 134 项：纯函数 + 存储 + 协议适配器 + 路由 + 漫画 + 客户端产物
+    npm test              # 164 项：纯函数 + 存储 + 协议适配器 + 路由 + 漫画 + 客户端产物
     npm run typecheck     # tsc strict，零错误
     npm run build         # tsc -> lib/（git 安装由 prepare 自动构建）
-    npm run sync:check    # 上游数据对账（离线可跑）
+    npm run sync:upstream:check   # 上游数据对账（离线可跑）
+    npm run sync:mirror   # 同步 dsh-plugins 分发镜像（需 ../dsh-plugins 仓存在）
+    npm run sync:check    # 镜像对账：与 ../dsh-plugins 零差异
+    npm run release:notes # 把 release/vX.Y.Z.md 同步为 GitHub Release（需 gh 登录）
 
 ## 目录
 

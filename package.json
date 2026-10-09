@@ -13,19 +13,34 @@
     "knowledge-comic"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kkutysllb/dsh-kylin-images.git"
+  },
+  "homepage": "https://github.com/kkutysllb/dsh-kylin-images#readme",
+  "bugs": {
+    "url": "https://github.com/kkutysllb/dsh-kylin-images/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "engines": {
     "node": ">=24"
   },
   "main": "./lib/index.js",
   "exports": {
-    ".": "./lib/index.js",
+    ".": {
+      "types": "./lib/index.d.ts",
+      "default": "./lib/index.js"
+    },
     "./client": "./client.js",
     "./cordis.patch.yml": "./cordis.patch.yml",
     "./package.json": "./package.json"
   },
   "files": [
     "lib",
+    "release",
     "data",
     "skills",
     "client.js",
@@ -40,8 +55,11 @@
     "build": "tsc -p tsconfig.json",
     "prepare": "npm run build",
     "sync:upstream": "node scripts/sync-upstream.mjs",
-    "sync:check": "node scripts/sync-upstream.mjs --check",
-    "prepack": "npm run typecheck && npm test && npm run sync:check"
+    "sync:upstream:check": "node scripts/sync-upstream.mjs --check",
+    "sync:mirror": "node scripts/sync-to-dsh-plugins.mjs",
+    "sync:check": "node scripts/sync-to-dsh-plugins.mjs --check",
+    "release:notes": "node scripts/create-github-releases.mjs",
+    "prepack": "npm run typecheck && npm test && npm run build && npm run sync:upstream:check"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

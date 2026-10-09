@@ -17,7 +17,7 @@
     npm install
     npm run typecheck     # 期望：无输出（无类型错误）
     npm test              # 期望：tests 164 / pass 164 / fail 0
-    npm run sync:check    # 期望：上游对账通过 commit 65a9c57a1968
+    npm run sync:upstream:check   # 期望：上游对账通过 commit 65a9c57a1968
     npm run build         # 期望：生成 lib/
 
 ## 2. 装到 dsh
