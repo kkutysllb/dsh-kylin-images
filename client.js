@@ -30,7 +30,9 @@ window.__ModuleLoader__.load({
       title: '视觉模型',
       intro: '决定「用什么画、画成什么样」：通道与模型、生成默认值、全局负面词、成本与缓存。API Key 只保存在本机插件数据目录（0600），界面永远只显示脱敏串。',
       channels: '通道',
-      addChannel: '新增 / 更新通道',
+      channelsSub: '已配置的图像通道。密钥只保存在本机、界面只显示脱敏串；可编辑、测试或删除。',
+      addChannel: '添加 / 编辑通道',
+      addChannelSub: '填好站点信息即可新增；点上方通道行的「编辑」可原地修改，API Key 留空表示沿用已保存的密钥。',
       label: '名称',
       kind: '类型',
       baseUrl: 'Base URL（https，本机回环可 http）',
@@ -43,6 +45,7 @@ window.__ModuleLoader__.load({
       test: '测试通道',
       testing: '测试中…',
       defaults: '生成默认值',
+      defaultsSub: '提示词未指定时使用的缺省值，对所有 img_* 工具调用生效。',
       aspectRatio: '默认宽高比',
       resolution: '默认分辨率',
       format: '默认格式',
@@ -87,7 +90,9 @@ window.__ModuleLoader__.load({
       title: 'Vision model',
       intro: 'Controls what draws and how it looks: channel and model, generation defaults, global negatives, cost and cache. The API key stays in this plugin\'s local data directory (0600); the UI only ever shows a masked string.',
       channels: 'Channels',
-      addChannel: 'Add / update channel',
+      channelsSub: 'Configured image channels. Keys stay on this machine and are always masked; edit, test or remove.',
+      addChannel: 'Add / edit channel',
+      addChannelSub: 'Fill in the endpoint to add one. Use "Edit" on a channel above to update it in place; leave the key blank to keep the stored one.',
       label: 'Label',
       kind: 'Kind',
       baseUrl: 'Base URL (https; http only for loopback)',
@@ -100,6 +105,7 @@ window.__ModuleLoader__.load({
       test: 'Test channel',
       testing: 'Testing…',
       defaults: 'Generation defaults',
+      defaultsSub: 'Used when the prompt does not specify; applies to every img_* tool.',
       aspectRatio: 'Default aspect ratio',
       resolution: 'Default resolution',
       format: 'Default format',
@@ -223,23 +229,71 @@ window.__ModuleLoader__.load({
       var style = document.createElement('style');
       style.id = STYLE_ID;
       style.textContent = [
-        '.kimg-root{display:flex;flex-direction:column;gap:18px;max-width:64em}',
-        '.kimg-intro{margin:0;font-size:13px;line-height:1.7;opacity:.66}',
-        '.kimg-card{border:1px solid var(--dsw-alias-border-subtle, rgba(127,127,127,.28));border-radius:var(--dsw-radius-medium, 10px);padding:14px 16px}',
-        '.kimg-card h3{margin:0 0 10px;font-size:13px;font-weight:600;letter-spacing:.02em;opacity:.8}',
-        '.kimg-row{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:1px dashed var(--dsw-alias-border-subtle, rgba(127,127,127,.18))}',
-        '.kimg-row:last-child{border-bottom:none}',
-        '.kimg-name{font-weight:600}',
-        '.kimg-meta{font-size:12px;opacity:.62}',
-        '.kimg-field{display:flex;flex-direction:column;gap:4px;margin-bottom:10px}',
-        '.kimg-field label{font-size:12px;opacity:.72}',
-        '.kimg-field input,.kimg-field select{background:transparent;border:1px solid var(--dsw-alias-border-subtle, rgba(127,127,127,.3));border-radius:var(--dsw-radius-small, 6px);padding:6px 8px;color:inherit;font:inherit}',
-        '.kimg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:10px}',
-        '.kimg-actions{display:flex;gap:8px;align-items:center}',
-        '.kimg-actions button{border:1px solid var(--dsw-alias-border-subtle, rgba(127,127,127,.3));background:transparent;color:inherit;border-radius:var(--dsw-radius-small, 6px);padding:6px 12px;cursor:pointer;font:inherit}',
-        '.kimg-actions button[disabled]{opacity:.45;cursor:default}',
-        '.kimg-state{font-size:12px;opacity:.66}',
-        '.kimg-state[data-kind=error]{color:var(--dsw-alias-text-danger, #d9534f);opacity:1}',
+        // 配色一律走宿主别名令牌（亮暗主题自动跟随），括号里只是令牌缺失时的兜底值
+        '.kimg-root{display:flex;flex-direction:column;gap:20px;max-width:72em;font-size:13px;color:var(--dsw-alias-label-primary,#1f2329)}',
+        '.kimg-intro{margin:0;color:var(--dsw-alias-label-secondary,#5c6470);font-size:13px;line-height:1.75}',
+        // 卡片：宿主设置卡专用的 fill/stroke 令牌，圆角与留白放大一档，做出「版面感」
+        '.kimg-card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-2,transparent));'
+          + 'border:1px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l2,rgba(127,127,127,.22)));'
+          + 'border-radius:var(--dsw-radius-lg,14px);padding:20px 22px}',
+        '.kimg-card h3{margin:0;font-size:14px;font-weight:600;letter-spacing:.01em;color:var(--dsw-alias-label-primary,#1f2329)}',
+        '.kimg-card-sub{margin:4px 0 18px;color:var(--dsw-alias-label-tertiary,#8a919c);font-size:12px;line-height:1.65}',
+        // 通道条目：可悬浮的次级卡，而不是一行虚线分隔
+        '.kimg-channel{display:flex;align-items:center;gap:12px;padding:12px 14px;'
+          + 'border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.22));border-radius:var(--dsw-radius-sm,10px);'
+          + 'background:var(--dsw-alias-bg-layer-1,transparent);transition:border-color .16s ease,background-color .16s ease}',
+        '.kimg-channel:hover{border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.38));background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.05))}',
+        '.kimg-channel + .kimg-channel{margin-top:10px}',
+        '.kimg-name{font-weight:600;font-size:13px;color:var(--dsw-alias-label-primary,#1f2329);flex:none}',
+        '.kimg-meta{font-size:12px;color:var(--dsw-alias-label-tertiary,#8a919c);min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
+        '.kimg-row{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+        '.kimg-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(230px,1fr));gap:16px;align-items:start}',
+        '.kimg-field{display:flex;flex-direction:column;gap:6px;min-width:0}',
+        '.kimg-field>label{font-size:12px;line-height:1.4;color:var(--dsw-alias-label-secondary,#5c6470)}',
+        '.kimg-field input[type=text],.kimg-field input[type=password],.kimg-field input[type=number],.kimg-field select{'
+          + 'width:100%;box-sizing:border-box;background:var(--dsw-alias-bg-layer-1,transparent);'
+          + 'border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.25));border-radius:var(--dsw-radius-sm,8px);'
+          + 'padding:8px 10px;color:var(--dsw-alias-label-primary,#1f2329);font:inherit;font-size:13px;'
+          + 'transition:border-color .16s ease,background-color .16s ease}',
+        '.kimg-field input::placeholder{color:var(--dsw-alias-label-tertiary,#8a919c)}',
+        '.kimg-field input:hover,.kimg-field select:hover{border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.4))}',
+        '.kimg-field input:focus,.kimg-field select:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#4c7dff);'
+          + 'box-shadow:0 0 0 3px var(--dsw-alias-focus-ring,rgba(76,125,255,.16))}',
+        // 按钮：主按钮实底、次按钮描边、危险按钮红字，悬浮有反馈
+        '.kimg-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
+        '.kimg-card>.kimg-actions{margin-top:18px;padding-top:14px;border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.12))}',
+        '.kimg-btn{appearance:none;display:inline-flex;align-items:center;gap:6px;'
+          + 'border:1px solid var(--dsw-alias-border-l2,rgba(127,127,127,.25));background:transparent;'
+          + 'color:var(--dsw-alias-label-primary,#1f2329);border-radius:var(--dsw-radius-sm,8px);padding:7px 14px;'
+          + 'font:inherit;font-size:13px;line-height:1.2;cursor:pointer;'
+          + 'transition:background-color .16s ease,border-color .16s ease,color .16s ease}',
+        '.kimg-btn:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(127,127,127,.07));border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.4))}',
+        '.kimg-btn:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4c7dff);outline-offset:2px}',
+        '.kimg-btn[disabled]{opacity:.45;cursor:default}',
+        '.kimg-btn-primary{background:var(--dsw-alias-button-primary-fill,var(--dsw-alias-brand-primary,#4c7dff));border-color:transparent;color:var(--dsw-alias-label-primary-inverted,#fff)}',
+        '.kimg-btn-primary:hover{background:var(--dsw-alias-button-primary-hover,var(--dsw-alias-brand-primary,#4c7dff));border-color:transparent}',
+        '.kimg-btn-danger{color:var(--dsw-alias-state-error-primary,#d9534f)}',
+        '.kimg-btn-danger:hover{background:var(--dsw-alias-interactive-bg-hover-danger,rgba(217,83,79,.1));border-color:var(--dsw-alias-state-error-primary,#d9534f)}',
+        '.kimg-check{display:inline-flex;align-items:flex-start}',
+        '.kimg-check>label{display:flex;align-items:flex-start;gap:8px;font-size:12px;line-height:1.6;color:var(--dsw-alias-label-secondary,#5c6470);cursor:pointer}',
+        '.kimg-check input[type=checkbox]{width:15px;height:15px;margin:1px 0 0;accent-color:var(--dsw-alias-brand-primary,#4c7dff);flex:none;cursor:pointer}',
+        // 状态条：左侧 3px 状态色，克制但有指向
+        '.kimg-state{font-size:12.5px;line-height:1.7;color:var(--dsw-alias-label-secondary,#5c6470);padding:10px 12px;'
+          + 'border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.12));border-left:3px solid var(--dsw-alias-border-l3,rgba(127,127,127,.3));'
+          + 'border-radius:var(--dsw-radius-sm,8px);background:var(--dsw-alias-bg-layer-1,transparent)}',
+        '.kimg-state[data-kind=ok]{border-left-color:var(--dsw-alias-state-success-primary,#3f9b6a)}',
+        '.kimg-state[data-kind=error]{color:var(--dsw-alias-state-error-primary,#d9534f);border-left-color:var(--dsw-alias-state-error-primary,#d9534f)}',
+        '.kimg-editing{border-left-color:var(--dsw-alias-state-warn-primary,#d9a53f)}',
+        '.kimg-empty{margin:0;padding:26px 20px;text-align:center;color:var(--dsw-alias-label-tertiary,#8a919c);font-size:12.5px;line-height:1.8;'
+          + 'border:1px dashed var(--dsw-alias-border-l2,rgba(127,127,127,.25));border-radius:var(--dsw-radius-sm,10px)}',
+        '.kimg-loading{margin:0;color:var(--dsw-alias-label-tertiary,#8a919c);font-size:12.5px;animation:kimg-pulse 1.4s ease-in-out infinite}',
+        '.kimg-footer{display:flex;align-items:center;gap:14px;flex-wrap:wrap;margin:0;padding-top:16px;'
+          + 'border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.12));color:var(--dsw-alias-label-tertiary,#8a919c);font-size:12px}',
+        // 漫画页缩略图：统一圆角描边，不再各写一份内联样式
+        '.kimg-thumbs{display:flex;flex-wrap:wrap;gap:10px;margin-top:12px}',
+        '.kimg-thumbs img{width:200px;max-width:100%;border-radius:var(--dsw-radius-sm,8px);border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.12));display:block}',
+        '@keyframes kimg-pulse{0%,100%{opacity:1}50%{opacity:.45}}',
+        '@media (prefers-reduced-motion:reduce){.kimg-root *{transition:none!important;animation:none!important}}',
         // 设置页导航字形：隐藏壳层 SVG，用 ::before + mask 画自定义字形
         // 壳层字形可能直接是子元素，也可能被一层 span 包着：两种都隐藏
         '[' + NAV_VISION + '] > svg:first-child,'
@@ -340,13 +394,13 @@ window.__ModuleLoader__.load({
       }
 
       if (snapshot.status === 'loading') {
-        return React.createElement('p', { className: 'kimg-state' }, t('loading'));
+        return React.createElement('p', { className: 'kimg-loading' }, t('loading'));
       }
       if (snapshot.status === 'error') {
         return React.createElement('div', null,
           React.createElement('p', { className: 'kimg-state', 'data-kind': 'error' }, t('loadFailed')),
           React.createElement('div', { className: 'kimg-actions' },
-            React.createElement('button', { type: 'button', onClick: load }, t('retry'))));
+            React.createElement('button', { type: 'button', className: 'kimg-btn', onClick: load }, t('retry'))));
       }
 
       var settings = snapshot.settings || {};
@@ -365,15 +419,16 @@ window.__ModuleLoader__.load({
 
         React.createElement('div', { className: 'kimg-card' },
           React.createElement('h3', null, t('channels')),
+          React.createElement('p', { className: 'kimg-card-sub' }, t('channelsSub')),
           snapshot.channels.length === 0
-            ? React.createElement('p', { className: 'kimg-state' }, t('empty'))
+            ? React.createElement('p', { className: 'kimg-empty' }, t('empty'))
             : snapshot.channels.map(function (channel) {
-                return React.createElement('div', { className: 'kimg-row', key: channel.id },
+                return React.createElement('div', { className: 'kimg-channel', key: channel.id },
                   React.createElement('span', { className: 'kimg-name' }, channel.label),
                   React.createElement('span', { className: 'kimg-meta' }, channel.id + ' · ' + channel.kind + ' · key=' + (channel.apiKey || t('noKey')) + ' · ' + (channel.models || []).join(', ')),
                   React.createElement('span', { style: { flex: 1 } }),
                   React.createElement('button', {
-                    type: 'button', disabled: busy,
+                    type: 'button', className: 'kimg-btn', disabled: busy,
                     onClick: function () {
                       // 不带 id 的 upsert 会新开一条（slugFrom 会避开已占用 id），
                       // 所以「改类型」必须先把既有通道读进草稿，否则用户只能删了重建 + 重输密钥。
@@ -391,7 +446,7 @@ window.__ModuleLoader__.load({
                     },
                   }, t('edit')),
                   React.createElement('button', {
-                    type: 'button', disabled: busy,
+                    type: 'button', className: 'kimg-btn', disabled: busy,
                     onClick: function () {
                       setBusy(true);
                       request('channels.probe', { id: channel.id, realRun: realRun }).then(function (payload) {
@@ -409,18 +464,19 @@ window.__ModuleLoader__.load({
                     },
                   }, busy ? t('testing') : t('test')),
                   React.createElement('button', {
-                    type: 'button', disabled: busy,
+                    type: 'button', className: 'kimg-btn kimg-btn-danger', disabled: busy,
                     onClick: function () { run(request('channels.remove', { id: channel.id })); },
                   }, t('remove')));
               })),
 
         React.createElement('div', { className: 'kimg-card' },
           React.createElement('h3', null, t('addChannel')),
+          React.createElement('p', { className: 'kimg-card-sub' }, t('addChannelSub')),
           draft.id !== ''
-            ? React.createElement('p', { className: 'kimg-state' },
+            ? React.createElement('p', { className: 'kimg-state kimg-editing' },
                 t('editing') + ' ' + draft.id + ' — ' + t('keepKeyHint') + ' ',
                 React.createElement('button', {
-                  type: 'button', disabled: busy,
+                  type: 'button', className: 'kimg-btn', disabled: busy,
                   onClick: function () { setDraft(emptyDraft()); setNotice(null); },
                 }, t('cancelEdit')))
             : null,
@@ -430,11 +486,12 @@ window.__ModuleLoader__.load({
             field('baseUrl', t('baseUrl'), draft.baseUrl, function (value) { setDraft(Object.assign({}, draft, { baseUrl: value })); }),
             field('apiKey', t('apiKey'), draft.apiKey, function (value) { setDraft(Object.assign({}, draft, { apiKey: value })); }, 'password'),
             field('models', t('models'), draft.models, function (value) { setDraft(Object.assign({}, draft, { models: value })); }),
-            select('sizeStyle', t('sizeStyle'), draft.sizeStyle, ['ratio-resolution', 'pixels', 'ignore'], function (value) { setDraft(Object.assign({}, draft, { sizeStyle: value })); }),
-            checkbox('autoFallback', t('autoFallback'), draft.autoFallback, function (value) { setDraft(Object.assign({}, draft, { autoFallback: value })); })),
+            select('sizeStyle', t('sizeStyle'), draft.sizeStyle, ['ratio-resolution', 'pixels', 'ignore'], function (value) { setDraft(Object.assign({}, draft, { sizeStyle: value })); })),
           React.createElement('div', { className: 'kimg-actions' },
+            checkbox('autoFallback', t('autoFallback'), draft.autoFallback, function (value) { setDraft(Object.assign({}, draft, { autoFallback: value })); }),
+            React.createElement('span', { style: { flex: 1 } }),
             React.createElement('button', {
-              type: 'button', disabled: busy,
+              type: 'button', className: 'kimg-btn kimg-btn-primary', disabled: busy,
               onClick: function () {
                 var channel = { id: draft.id, label: draft.label, kind: draft.kind, baseUrl: draft.baseUrl, apiKey: draft.apiKey, models: splitList(draft.models), sizeStyle: draft.sizeStyle, autoFallback: draft.autoFallback === true };
                 run(request('channels.upsert', { channel: channel })).then(function () {
@@ -446,6 +503,7 @@ window.__ModuleLoader__.load({
 
         React.createElement('div', { className: 'kimg-card' },
           React.createElement('h3', null, t('defaults')),
+          React.createElement('p', { className: 'kimg-card-sub' }, t('defaultsSub')),
           React.createElement('div', { className: 'kimg-grid' },
             select('defaultAspectRatio', t('aspectRatio'), settings.defaultAspectRatio, ['3:4', '4:3', '16:9', '9:16', '1:1', '2:3', '3:2'], function (value) { updateSetting('defaultAspectRatio', value); }),
             select('defaultResolution', t('resolution'), settings.defaultResolution, ['1k', '2k', '4k'], function (value) { updateSetting('defaultResolution', value); }),
@@ -456,10 +514,10 @@ window.__ModuleLoader__.load({
             field('globalNegative', t('globalNegative'), (settings.globalNegative || []).join(', '), function (value) { updateSetting('globalNegative', splitList(value)); }),
             select('cacheEnabled', t('cache'), String(settings.cacheEnabled), ['true', 'false'], function (value) { updateSetting('cacheEnabled', value === 'true'); }))),
 
-        React.createElement('p', { className: 'kimg-state' },
+        React.createElement('p', { className: 'kimg-footer' },
           t('spend') + ': ' + spend.total + ' ' + spend.currency + ' · ' + spend.images + ' / ' + spend.entries,
           cache === null ? null : ' · ' + t('cache') + ': ' + cache.entries + ' / ' + cache.hits,
-          React.createElement('label', { style: { marginLeft: '12px' } },
+          React.createElement('label', { className: 'kimg-check' },
             React.createElement('input', {
               type: 'checkbox',
               checked: realRun,
@@ -478,7 +536,7 @@ window.__ModuleLoader__.load({
     }
 
     function checkbox(name, label, checked, onChange) {
-      return React.createElement('div', { className: 'kimg-field', key: name },
+      return React.createElement('div', { className: 'kimg-check', key: name },
         React.createElement('label', null,
           React.createElement('input', {
             type: 'checkbox',
@@ -544,21 +602,21 @@ window.__ModuleLoader__.load({
       }
 
       if (snapshot.status === 'loading') {
-        return React.createElement('p', { className: 'kimg-state' }, t('loading'));
+        return React.createElement('p', { className: 'kimg-loading' }, t('loading'));
       }
       if (snapshot.status === 'error') {
         return React.createElement('div', null,
           React.createElement('p', { className: 'kimg-state', 'data-kind': 'error' }, t('loadFailed')),
           React.createElement('div', { className: 'kimg-actions' },
-            React.createElement('button', { type: 'button', onClick: load }, t('retry'))));
+            React.createElement('button', { type: 'button', className: 'kimg-btn', onClick: load }, t('retry'))));
       }
 
       return React.createElement('div', { className: 'kimg-root' },
         React.createElement('p', { className: 'kimg-intro' }, t('workbenchIntro')),
         React.createElement('div', { className: 'kimg-actions' },
-          React.createElement('button', { type: 'button', onClick: load }, t('refresh'))),
+          React.createElement('button', { type: 'button', className: 'kimg-btn', onClick: load }, t('refresh'))),
         snapshot.projects.length === 0
-          ? React.createElement('p', { className: 'kimg-state' }, t('workbenchEmpty'))
+          ? React.createElement('p', { className: 'kimg-empty' }, t('workbenchEmpty'))
           : React.createElement('div', null, snapshot.projects.map(function (project) {
               var detail = snapshot.open === project.id ? snapshot.detail : null;
               var images = [];
@@ -569,25 +627,24 @@ window.__ModuleLoader__.load({
                       key: page.index,
                       src: artifactUrl('comics/' + project.id + '/' + page.imagePath),
                       alt: page.title,
-                      style: { width: '48%', margin: '1%', borderRadius: '6px' },
                     }));
                   }
                 });
               }
               return React.createElement('div', { key: project.id, className: 'kimg-card' },
-                React.createElement('div', { className: 'kimg-row' },
+                React.createElement('div', { className: 'kimg-channel' },
                   React.createElement('span', { className: 'kimg-name' }, project.topic),
                   React.createElement('span', { className: 'kimg-meta' },
                     project.stage + ' · ' + project.rendered + '/' + project.pages + ' ' + t('pages') +
                     ' · ' + project.spend.images + ' ' + t('images')),
                   React.createElement('span', { style: { flex: 1 } }),
-                  React.createElement('button', { type: 'button', onClick: function () { openProject(project.id); } },
+                  React.createElement('button', { type: 'button', className: 'kimg-btn', onClick: function () { openProject(project.id); } },
                     snapshot.open === project.id ? t('collapse') : t('expand'))),
                 snapshot.open === project.id ? React.createElement('div', null,
-                  React.createElement('div', { style: { display: 'flex', flexWrap: 'wrap' } }, images),
+                  React.createElement('div', { className: 'kimg-thumbs' }, images),
                   React.createElement('div', { className: 'kimg-actions' },
                     React.createElement('button', {
-                      type: 'button',
+                      type: 'button', className: 'kimg-btn',
                       onClick: function () {
                         if (typeof window !== 'undefined' && window.open) {
                           window.open(artifactUrl('comics/' + project.id + '/contact-sheet.html'), '_blank');
