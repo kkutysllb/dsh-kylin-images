@@ -243,6 +243,9 @@ export class Vault {
       if (!Number.isFinite(parsed) || parsed < 1000 || parsed > 600000) errors.push('timeoutMs 必须在 1000..600000 之间')
     }
 
+    const autoFallback = input['autoFallback']
+    if (autoFallback !== undefined && typeof autoFallback !== 'boolean') errors.push('autoFallback 必须是布尔值')
+
     const retries = input['retries']
     if (retries !== undefined && retries !== '' && retries !== null) {
       const parsed = Number(retries)
@@ -273,6 +276,9 @@ export class Vault {
     if (normalizedPricing !== undefined) record.pricing = normalizedPricing
     if (timeoutMs !== undefined && timeoutMs !== '' && timeoutMs !== null) record.timeoutMs = Number(timeoutMs)
     if (retries !== undefined && retries !== '' && retries !== null) record.retries = Number(retries)
+    // 与 apiKey 同理：本次没带这个字段就沿用旧值，不能让一次局部编辑把开关重置。
+    const effectiveAutoFallback = typeof autoFallback === 'boolean' ? autoFallback : existing?.autoFallback
+    if (effectiveAutoFallback !== undefined) record.autoFallback = effectiveAutoFallback
 
     if (existing === undefined) this.data.channels.push(record)
     else this.data.channels[this.data.channels.indexOf(existing)] = record

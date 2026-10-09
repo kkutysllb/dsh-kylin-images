@@ -36,6 +36,8 @@ export interface ChannelRecord {
   timeoutMs?: number
   retries?: number
   sizeStyle?: SizeStyle
+  /** 端点被前置代理拦截时，是否自动换到另一条 OpenAI 兼容出图路径（缺省视为开启）。 */
+  autoFallback?: boolean
   enabled: boolean
   createdAt: string
   updatedAt: string

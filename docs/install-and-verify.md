@@ -16,7 +16,7 @@
     cd /path/to/dsh-kylin-images
     npm install
     npm run typecheck     # 期望：无输出（无类型错误）
-    npm test              # 期望：tests 151 / pass 151 / fail 0
+    npm test              # 期望：tests 164 / pass 164 / fail 0
     npm run sync:check    # 期望：上游对账通过 commit 65a9c57a1968
     npm run build         # 期望：生成 lib/
 
@@ -43,6 +43,9 @@
 **验收点 3**：插件详情页出现「视觉模型」配置卡（plugins.bundle.config 座席），
 另有设置页导航「视觉模型」兜底项（settings.section）。卡片能列通道、保存后回显脱敏串。
 
+**验收点 3c**：通道行有**「编辑」**按钮：点开会把该通道读进表单（含 id），保存后**原地更新**而不是新开一条，
+且 Key 留空时**沿用已保存的密钥**（界面只回显脱敏串，无法回填明文）。
+
 **验收点 3b**：配置卡的「类型」下拉里**必须能选到 openai-responses**（4 个类型齐全，且各带一句说明）。
 历史缺陷：下拉曾漏掉 openai-responses，导致只能选同步出图，而站点恰好只放行 Responses 路径——
 真机上一出图就是 403 HTML。测试已按服务端 CHANNEL_KINDS 对账防漂移。
@@ -59,11 +62,21 @@
 | API Key | 你的密钥（保存后只显示 sk-••••xxx，明文只进本机 vault） |
 | 模型 | gpt-image-2（也可加 gpt-image-2.5） |
 | 尺寸风格 | pixels |
+| 自动回退 | 保持勾选（类型配错时自动改走另一条出图路径，见验收点 4c） |
 | 超时 | 300000（该站单张约 30s，带参考图可达 40s+） |
 | 价目覆盖 | 建议 default: 0.02（实测约 ¥0.017/张默认画质） |
 
 **验收点 4**：「测试通道」期望 auth=ok、端点=responses-images、模型 13 个。
 不勾「小额实跑」时**不产生任何费用**。
+
+**验收点 4c（自动回退）**：把通道类型故意选成 openai-images 再出图，应当**仍然成功**：
+本次会自动改用 /v1/responses，并在结果里明确写出「已从 openai-images 自动回退」，
+warnings 里给出「建议把该通道的类型直接改成 openai-responses」。
+真机实测：28.9s 出一张 1024×1024 PNG。
+
+回退的边界（都可测）：只对同一凭据同一站点的两条 OpenAI 兼容出图路径互换；
+首跳在网关即被拦、未产生费用，所以不存在双重计费；回退前先做零成本可达性探测，
+探测不通就不回退；通道可用「自动回退」勾选框关掉。
 
 **验收点 4b（端点可达性）**：探测结果里会多出两行「端点可达性」证据，例如：
 
@@ -129,6 +142,7 @@
 | 插件整块消失、无报错 | 启动日志有没有 did not activate；对照 M1 验收记录里的两个激活期陷阱 |
 | 麒麟报「没有声明组合包」 | package.json 的 qilin.bundle.patch 是否被安装包带上（files 白名单） |
 | 配置卡空白 | 浏览器控制台；缺 slots / configForms 服务时会软跳过并打 [dsh-kylin-images] 前缀的 warn |
+| 保存通道后密钥变成「未配置」 | 旧版本在 Key 留空时会写空串（已修：留空=沿用）。Key 只存在 vault 里，界面上是脱敏串，**改配置前请先确认版本已更新**；本机 vault 在 <home>/.dsh-kylin-images/vault.json |
 | 出图报 ENDPOINT_BLOCKED / 403 HTML | 端点把 images 路径挡了（前置代理返回 HTML 而非 API JSON）。这是**配置问题不是 Key 问题**：把通道类型改成 openai-responses。用 img_channels action=probe 看零成本端点探测给出的建议 |
 | 出图 401 / 402 | 密钥或余额；img_channels action=test 看具体错误码与建议 |
 | 批量被要求确认 | 成本护栏生效（未知价或超 ¥1 阈值），带 confirm=true 重调即可 |

@@ -103,6 +103,23 @@ test('upsert：更新时 Key 留空沿用旧密钥（改一次类型不会把密
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('upsert：autoFallback 缺省不写字段；显式 false 被记住，且局部编辑不会把它重置', () => {
+  const dir = tempDir()
+  try {
+    const vault = new Vault(dir)
+    vault.upsert({ id: 'relay', label: '中转', kind: 'openai-images', baseUrl: 'https://relay.example.com', apiKey: 'k' })
+    assert.equal(vault.find('relay')?.autoFallback, undefined, '缺省不写字段（视为开启）')
+    vault.upsert({ id: 'relay', label: '中转', kind: 'openai-images', baseUrl: 'https://relay.example.com', apiKey: 'k', autoFallback: false })
+    assert.equal(vault.find('relay')?.autoFallback, false)
+    // 与 apiKey 同理：不带该字段的局部编辑必须沿用旧值
+    vault.upsert({ id: 'relay', label: '中转', kind: 'openai-responses', baseUrl: 'https://relay.example.com', apiKey: '' })
+    assert.equal(vault.find('relay')?.autoFallback, false, '局部编辑不得把开关重置')
+    const bad = vault.upsert({ id: 'relay', label: '中转', kind: 'openai-responses', baseUrl: 'https://relay.example.com', apiKey: 'k', autoFallback: 'yes' })
+    assert.equal(bad.ok, false)
+    assert.ok(bad.errors.some((e) => e.includes('autoFallback')))
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('upsert：不带 id 时按 label 生成 id（中文回退 channel），重复提交会新开一条', () => {
   const dir = tempDir()
   try {

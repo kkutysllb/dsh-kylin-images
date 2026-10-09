@@ -71,6 +71,7 @@ window.__ModuleLoader__.load({
       noKey: '未配置',
       saved: '已保存',
       edit: '编辑',
+      autoFallback: '端点被前置代理拦截时，自动回退到另一条出图路径（推荐开启）',
       editing: '正在编辑',
       keepKeyHint: 'API Key 留空表示沿用已保存的密钥。',
       cancelEdit: '取消编辑',
@@ -127,6 +128,7 @@ window.__ModuleLoader__.load({
       noKey: 'not set',
       saved: 'Saved',
       edit: 'Edit',
+      autoFallback: 'Fall back to the other image endpoint when the front proxy blocks this one (recommended)',
       editing: 'Editing',
       keepKeyHint: 'Leave the API key blank to keep the stored one.',
       cancelEdit: 'Cancel edit',
@@ -277,7 +279,7 @@ window.__ModuleLoader__.load({
 
     /** 表单初始值。id 非空表示正在编辑既有通道（保存时按 id 原地更新）。 */
     function emptyDraft() {
-      return { id: '', label: '', kind: 'mock', baseUrl: '', apiKey: '', models: '', sizeStyle: 'ratio-resolution' };
+      return { id: '', label: '', kind: 'mock', baseUrl: '', apiKey: '', models: '', sizeStyle: 'ratio-resolution', autoFallback: true };
     }
 
     function kindOptions() {
@@ -383,6 +385,7 @@ window.__ModuleLoader__.load({
                         apiKey: '',
                         models: (channel.models || []).join(', '),
                         sizeStyle: channel.sizeStyle || 'ratio-resolution',
+                        autoFallback: channel.autoFallback !== false,
                       });
                       setNotice(null);
                     },
@@ -427,12 +430,13 @@ window.__ModuleLoader__.load({
             field('baseUrl', t('baseUrl'), draft.baseUrl, function (value) { setDraft(Object.assign({}, draft, { baseUrl: value })); }),
             field('apiKey', t('apiKey'), draft.apiKey, function (value) { setDraft(Object.assign({}, draft, { apiKey: value })); }, 'password'),
             field('models', t('models'), draft.models, function (value) { setDraft(Object.assign({}, draft, { models: value })); }),
-            select('sizeStyle', t('sizeStyle'), draft.sizeStyle, ['ratio-resolution', 'pixels', 'ignore'], function (value) { setDraft(Object.assign({}, draft, { sizeStyle: value })); })),
+            select('sizeStyle', t('sizeStyle'), draft.sizeStyle, ['ratio-resolution', 'pixels', 'ignore'], function (value) { setDraft(Object.assign({}, draft, { sizeStyle: value })); }),
+            checkbox('autoFallback', t('autoFallback'), draft.autoFallback, function (value) { setDraft(Object.assign({}, draft, { autoFallback: value })); })),
           React.createElement('div', { className: 'kimg-actions' },
             React.createElement('button', {
               type: 'button', disabled: busy,
               onClick: function () {
-                var channel = { id: draft.id, label: draft.label, kind: draft.kind, baseUrl: draft.baseUrl, apiKey: draft.apiKey, models: splitList(draft.models), sizeStyle: draft.sizeStyle };
+                var channel = { id: draft.id, label: draft.label, kind: draft.kind, baseUrl: draft.baseUrl, apiKey: draft.apiKey, models: splitList(draft.models), sizeStyle: draft.sizeStyle, autoFallback: draft.autoFallback === true };
                 run(request('channels.upsert', { channel: channel })).then(function () {
                   // 保留类型与尺寸风格，方便连续配置多个同构通道；其余清空。
                   setDraft(Object.assign(emptyDraft(), { kind: draft.kind, sizeStyle: draft.sizeStyle }));
@@ -471,6 +475,17 @@ window.__ModuleLoader__.load({
           value: value === undefined || value === null ? '' : value,
           onChange: function (event) { onChange(event.target.value); },
         }));
+    }
+
+    function checkbox(name, label, checked, onChange) {
+      return React.createElement('div', { className: 'kimg-field', key: name },
+        React.createElement('label', null,
+          React.createElement('input', {
+            type: 'checkbox',
+            checked: checked === true,
+            onChange: function (event) { onChange(event.target.checked); },
+          }),
+          ' ' + label));
     }
 
     function select(name, label, value, options, onChange) {

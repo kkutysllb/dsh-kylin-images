@@ -285,6 +285,13 @@ test('设置页面板真实渲染：类型下拉列出 openai-responses，且渲
   const label = String(responsesOption?.children[0] ?? '')
   assert.ok(label.includes('openai-responses'))
   assert.ok(label.includes('image_generation'), '选项应带说明，提示这是图片模型的真实形态')
+  // 表单里已有「探测时小额实跑」勾选框，所以按字段名与默认值定位，不数个数
+  const autoField = elements.find((node) => node.props['key'] === 'autoFallback')
+  assert.ok(autoField !== undefined, '表单应有自动回退字段')
+  const autoCheckbox = elements.find(
+    (node) => node.type === 'input' && node.props['type'] === 'checkbox' && node.props['checked'] === true,
+  )
+  assert.ok(autoCheckbox !== undefined, '自动回退勾选框默认应为选中')
   // 通道行上要有编辑入口（否则改类型只能删了重建）
   const buttonLabels = elements
     .filter((node) => node.type === 'button')
@@ -304,6 +311,13 @@ test('通道可编辑：编辑按钮把既有通道读进草稿，保存时带 i
   assert.ok(source.includes('keepKeyHint'), '应提示 Key 留空即沿用')
   assert.ok(source.includes('cancelEdit'), '应能退出编辑态')
   assert.ok(source.includes('emptyDraft'), '草稿应有统一的初始值')
+})
+
+test('自动回退开关：表单里有勾选框，保存时明确传布尔值', () => {
+  assert.ok(source.includes("checkbox('autoFallback'"), '表单应有自动回退勾选框')
+  assert.ok(source.includes('autoFallback: draft.autoFallback === true'), '保存必须传明确的布尔值')
+  assert.ok(source.includes('autoFallback: channel.autoFallback !== false'), '编辑预填须把缺省视为开启')
+  assert.ok(source.includes("t('autoFallback')"), '文案要能本地化')
 })
 
 test('测试通道的结果里带上端点可达性证据', () => {

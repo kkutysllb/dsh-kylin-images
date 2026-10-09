@@ -10,10 +10,11 @@ import { composePrompt } from '../prompt/compose.ts'
 import type { ComposedPrompt } from '../prompt/compose.ts'
 import { defaultModelForKind } from '../provider/catalog.ts'
 import { describeError } from '../provider/errors.ts'
+import { planFallback } from '../provider/fallback.ts'
 import type { HttpOptions } from '../provider/http.ts'
 import { describeQuote, needsConfirmation, quoteImages } from '../provider/pricing.ts'
 import type { QuoteResult } from '../provider/pricing.ts'
-import type { ChannelRecord, GeneratedImage } from '../provider/types.ts'
+import type { ChannelRecord, GeneratedImage, GenerateResult } from '../provider/types.ts'
 import { cacheKey } from '../store/cache.ts'
 import { appendSpend } from '../store/spend.ts'
 import type { PluginRuntime } from './registry.ts'
@@ -178,9 +179,11 @@ export async function runGeneration(runtime: PluginRuntime, input: GenerationInp
   }
 
   const started = Date.now()
-  try {
-    const result = await runtime.providerFor(channel).generate(channel, {
-      channelId: channel.id,
+  const warnings = [...composed.warnings]
+
+  const generateOnce = async (target: ChannelRecord): Promise<GenerateResult> => {
+    return await runtime.providerFor(target).generate(target, {
+      channelId: target.id,
       model,
       prompt: composed.prompt,
       negative: composed.negative,
@@ -194,48 +197,77 @@ export async function runGeneration(runtime: PluginRuntime, input: GenerationInp
       fileStem,
       http: input.http,
     })
-    if (useCache) {
+  }
+
+  let effectiveChannel = channel
+  let result: GenerateResult | undefined
+  let failure: unknown
+  try {
+    result = await generateOnce(effectiveChannel)
+  } catch (error) {
+    // 端点被前置代理拦掉时，换到同站另一条 OpenAI 兼容出图路径重试一次。
+    // 首次失败发生在网关（未产生费用），因此不存在双重计费。
+    const decision = await planFallback(channel, error, { http: input.http })
+    if (decision === undefined) {
+      failure = error
+    } else {
+      warnings.push(decision.note)
+      effectiveChannel = decision.channel
       try {
-        runtime.cache.store(key, { channelId: channel.id, model, size: composed.size.size ?? '', resolution: composed.size.resolution ?? '', count, seed }, result.images.map((image) => image.path))
-        runtime.cache.prune(settings.cacheMaxEntries)
-      } catch {
-        // 缓存写入失败不影响本次交付
+        result = await generateOnce(effectiveChannel)
+      } catch (retryError) {
+        failure = retryError
       }
     }
-    appendSpend(runtime.home, {
-      at: new Date().toISOString(),
-      channelId: channel.id,
-      model: result.model,
-      count: result.images.length,
-      amount: quote.amount,
-      currency: quote.currency,
-      confidence: quote.confidence,
-      promptChars: composed.prompt.length,
-      durationMs: Date.now() - started,
-    })
-    return {
-      kind: 'generated',
-      message: '已通过通道 ' + channel.id + '（' + channel.kind + '）生成 ' + String(result.images.length) + ' 张图。',
-      channelId: channel.id,
-      model: result.model,
-      quote,
-      images: result.images,
-      warnings: composed.warnings,
-      composed,
-      durationMs: Date.now() - started,
-    }
-  } catch (error) {
+  }
+
+  if (result === undefined) {
     return {
       kind: 'error',
-      message: describeError(error),
+      message: describeError(failure),
       channelId: channel.id,
       model,
       quote,
       images: [],
-      warnings: composed.warnings,
+      warnings,
       composed,
       durationMs: Date.now() - started,
     }
+  }
+
+  // 缓存键故意不含端点风格：两条路子出的是同一模型同一提示词的同一张图，
+  // 让曾经回退成功的结果能被后续请求直接命中，免得每次都先去撞一遍被拦的端点。
+  if (useCache) {
+    try {
+      runtime.cache.store(key, { channelId: channel.id, model, size: composed.size.size ?? '', resolution: composed.size.resolution ?? '', count, seed }, result.images.map((image) => image.path))
+      runtime.cache.prune(settings.cacheMaxEntries)
+    } catch {
+      // 缓存写入失败不影响本次交付
+    }
+  }
+  appendSpend(runtime.home, {
+    at: new Date().toISOString(),
+    channelId: channel.id,
+    model: result.model,
+    count: result.images.length,
+    amount: quote.amount,
+    currency: quote.currency,
+    confidence: quote.confidence,
+    promptChars: composed.prompt.length,
+    durationMs: Date.now() - started,
+  })
+  const fellBack = effectiveChannel.kind !== channel.kind
+  return {
+    kind: 'generated',
+    message: '已通过通道 ' + channel.id + '（' + effectiveChannel.kind + '）生成 ' + String(result.images.length) + ' 张图。'
+      + (fellBack ? '（已从 ' + channel.kind + ' 自动回退）' : ''),
+    channelId: channel.id,
+    model: result.model,
+    quote,
+    images: result.images,
+    warnings,
+    composed,
+    durationMs: Date.now() - started,
   }
 }
 
