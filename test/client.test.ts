@@ -235,7 +235,15 @@ test('设置页面板真实渲染：类型下拉列出 openai-responses，且渲
     document: { getElementById: () => null, createElement: () => ({ textContent: '', parentNode: null }), head: { appendChild: () => undefined } },
     console,
     fetch: () => Promise.resolve({
-      json: () => Promise.resolve({ ok: true, value: { channels: [], settings, spend: { total: 0, currency: 'CNY', images: 0, entries: 0 }, cache: { entries: 0, hits: 0, dir: '' }, projects: [] } }),
+      json: () => Promise.resolve({ ok: true, value: {
+        channels: [{
+          id: 'channel', label: '天域', kind: 'openai-images', baseUrl: 'https://tianyuai.lol',
+          apiKey: 'sk-\u2022\u2022\u2022\u2022siA', hasKey: true, models: ['gpt-image-2'],
+          sizeStyle: 'ratio-resolution', enabled: true,
+        }],
+        settings, spend: { total: 0, currency: 'CNY', images: 0, entries: 0 },
+        cache: { entries: 0, hits: 0, dir: '' }, projects: [],
+      } }),
     }),
   }
   let captured: unknown
@@ -277,8 +285,25 @@ test('设置页面板真实渲染：类型下拉列出 openai-responses，且渲
   const label = String(responsesOption?.children[0] ?? '')
   assert.ok(label.includes('openai-responses'))
   assert.ok(label.includes('image_generation'), '选项应带说明，提示这是图片模型的真实形态')
+  // 通道行上要有编辑入口（否则改类型只能删了重建）
+  const buttonLabels = elements
+    .filter((node) => node.type === 'button')
+    .map((node) => String(node.children[0] ?? ''))
+  assert.ok(buttonLabels.includes('编辑'), '通道行应有「编辑」按钮，实际：' + buttonLabels.join(' / '))
+  assert.ok(buttonLabels.includes('测试通道'))
   // 顺带守住：不能只渲染出空白的根节点
   assert.ok(elements.length > 20, '应渲染出完整面板')
+})
+
+test('通道可编辑：编辑按钮把既有通道读进草稿，保存时带 id 原地更新', () => {
+  // 不带 id 的 upsert 会另开一条通道；而 Key 永不明文回显，
+  // 因此没有编辑入口时，用户「只想改个类型」就只能删了重建、重输密钥。
+  assert.ok(source.includes("t('edit')"), '通道行应有编辑按钮')
+  assert.ok(source.includes('id: channel.id'), '编辑应把既有通道 id 带进草稿')
+  assert.ok(source.includes('{ id: draft.id, label: draft.label'), '保存必须带上草稿 id 才能原地更新')
+  assert.ok(source.includes('keepKeyHint'), '应提示 Key 留空即沿用')
+  assert.ok(source.includes('cancelEdit'), '应能退出编辑态')
+  assert.ok(source.includes('emptyDraft'), '草稿应有统一的初始值')
 })
 
 test('测试通道的结果里带上端点可达性证据', () => {

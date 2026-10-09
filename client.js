@@ -70,6 +70,10 @@ window.__ModuleLoader__.load({
       retry: '重试',
       noKey: '未配置',
       saved: '已保存',
+      edit: '编辑',
+      editing: '正在编辑',
+      keepKeyHint: 'API Key 留空表示沿用已保存的密钥。',
+      cancelEdit: '取消编辑',
       kindHint: {
         'openai-images': '同步出图：POST /v1/images/generations',
         'openai-responses': 'Responses 出图：POST /v1/responses + image_generation（不少中转只放行这一条）',
@@ -122,6 +126,10 @@ window.__ModuleLoader__.load({
       retry: 'Retry',
       noKey: 'not set',
       saved: 'Saved',
+      edit: 'Edit',
+      editing: 'Editing',
+      keepKeyHint: 'Leave the API key blank to keep the stored one.',
+      cancelEdit: 'Cancel edit',
       kindHint: {
         'openai-images': 'Sync images: POST /v1/images/generations',
         'openai-responses': 'Responses images: POST /v1/responses + image_generation (many relays only allow this one)',
@@ -267,6 +275,11 @@ window.__ModuleLoader__.load({
      * 结果一出图就是 403 HTML。类型清单必须与 src/provider/types.ts 的 CHANNEL_KINDS 对齐。 */
     var KIND_VALUES = ['openai-images', 'openai-responses', 'task-images', 'mock'];
 
+    /** 表单初始值。id 非空表示正在编辑既有通道（保存时按 id 原地更新）。 */
+    function emptyDraft() {
+      return { id: '', label: '', kind: 'mock', baseUrl: '', apiKey: '', models: '', sizeStyle: 'ratio-resolution' };
+    }
+
     function kindOptions() {
       var hints = t('kindHint') || {};
       return KIND_VALUES.map(function (value) {
@@ -288,7 +301,7 @@ window.__ModuleLoader__.load({
       var realRunHook = React.useState(false);
       var realRun = realRunHook[0];
       var setRealRun = realRunHook[1];
-      var draftHook = React.useState({ label: '', kind: 'mock', baseUrl: '', apiKey: '', models: '', sizeStyle: 'ratio-resolution' });
+      var draftHook = React.useState(emptyDraft());
       var draft = draftHook[0];
       var setDraft = draftHook[1];
 
@@ -360,6 +373,23 @@ window.__ModuleLoader__.load({
                   React.createElement('button', {
                     type: 'button', disabled: busy,
                     onClick: function () {
+                      // 不带 id 的 upsert 会新开一条（slugFrom 会避开已占用 id），
+                      // 所以「改类型」必须先把既有通道读进草稿，否则用户只能删了重建 + 重输密钥。
+                      setDraft({
+                        id: channel.id,
+                        label: channel.label,
+                        kind: channel.kind,
+                        baseUrl: channel.baseUrl,
+                        apiKey: '',
+                        models: (channel.models || []).join(', '),
+                        sizeStyle: channel.sizeStyle || 'ratio-resolution',
+                      });
+                      setNotice(null);
+                    },
+                  }, t('edit')),
+                  React.createElement('button', {
+                    type: 'button', disabled: busy,
+                    onClick: function () {
                       setBusy(true);
                       request('channels.probe', { id: channel.id, realRun: realRun }).then(function (payload) {
                         setBusy(false);
@@ -383,6 +413,14 @@ window.__ModuleLoader__.load({
 
         React.createElement('div', { className: 'kimg-card' },
           React.createElement('h3', null, t('addChannel')),
+          draft.id !== ''
+            ? React.createElement('p', { className: 'kimg-state' },
+                t('editing') + ' ' + draft.id + ' — ' + t('keepKeyHint') + ' ',
+                React.createElement('button', {
+                  type: 'button', disabled: busy,
+                  onClick: function () { setDraft(emptyDraft()); setNotice(null); },
+                }, t('cancelEdit')))
+            : null,
           React.createElement('div', { className: 'kimg-grid' },
             field('label', t('label'), draft.label, function (value) { setDraft(Object.assign({}, draft, { label: value })); }),
             select('kind', t('kind'), draft.kind, kindOptions(), function (value) { setDraft(Object.assign({}, draft, { kind: value })); }),
@@ -394,9 +432,10 @@ window.__ModuleLoader__.load({
             React.createElement('button', {
               type: 'button', disabled: busy,
               onClick: function () {
-                var channel = { label: draft.label, kind: draft.kind, baseUrl: draft.baseUrl, apiKey: draft.apiKey, models: splitList(draft.models), sizeStyle: draft.sizeStyle };
+                var channel = { id: draft.id, label: draft.label, kind: draft.kind, baseUrl: draft.baseUrl, apiKey: draft.apiKey, models: splitList(draft.models), sizeStyle: draft.sizeStyle };
                 run(request('channels.upsert', { channel: channel })).then(function () {
-                  setDraft({ label: '', kind: draft.kind, baseUrl: '', apiKey: '', models: '', sizeStyle: draft.sizeStyle });
+                  // 保留类型与尺寸风格，方便连续配置多个同构通道；其余清空。
+                  setDraft(Object.assign(emptyDraft(), { kind: draft.kind, sizeStyle: draft.sizeStyle }));
                 });
               },
             }, busy ? t('saving') : t('save')))),

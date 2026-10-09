@@ -86,6 +86,37 @@ test('upsert：同 id 覆盖保留 createdAt 并更新 updatedAt', () => {
   } finally { rmSync(dir, { recursive: true, force: true }) }
 })
 
+test('upsert：更新时 Key 留空沿用旧密钥（改一次类型不会把密钥抹掉）', () => {
+  const dir = tempDir()
+  try {
+    const vault = new Vault(dir)
+    vault.upsert({ id: 'relay', label: '中转', kind: 'openai-images', baseUrl: 'https://relay.example.com', apiKey: 'sk-original-key', models: ['gpt-image-2'] })
+    // 界面永远只回显脱敏串，用户无法回填明文：留空必须是「沿用」而不是「清空」
+    const result = vault.upsert({ id: 'relay', label: '中转', kind: 'openai-responses', baseUrl: 'https://relay.example.com', apiKey: '', models: ['gpt-image-2'] })
+    assert.equal(result.ok, true)
+    assert.equal(vault.find('relay')?.kind, 'openai-responses')
+    assert.equal(vault.find('relay')?.apiKey, 'sk-original-key', 'Key 留空时必须沿用旧密钥')
+    assert.equal(vault.list().length, 1)
+    // 显式给新 Key 时照常替换
+    vault.upsert({ id: 'relay', label: '中转', kind: 'openai-responses', baseUrl: 'https://relay.example.com', apiKey: 'sk-new-key', models: ['gpt-image-2'] })
+    assert.equal(vault.find('relay')?.apiKey, 'sk-new-key')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
+test('upsert：不带 id 时按 label 生成 id（中文回退 channel），重复提交会新开一条', () => {
+  const dir = tempDir()
+  try {
+    const vault = new Vault(dir)
+    vault.upsert({ label: '天域', kind: 'openai-images', baseUrl: 'https://relay.example.com', apiKey: 'k' })
+    assert.equal(vault.list()[0]?.id, 'channel', '中文 label 生不出 slug，回退 channel')
+    // 这条锁住了「改类型必须带 id」的原因：不带 id 只会再开一条，不会原地改。
+    vault.upsert({ label: '天域', kind: 'openai-responses', baseUrl: 'https://relay.example.com', apiKey: 'k' })
+    assert.equal(vault.list().length, 2)
+    assert.equal(vault.list()[1]?.id, 'channel-2')
+    assert.equal(vault.list()[0]?.kind, 'openai-images', '原通道未被改动')
+  } finally { rmSync(dir, { recursive: true, force: true }) }
+})
+
 test('remove：删除通道并把默认通道回退到剩余第一个', () => {
   const dir = tempDir()
   try {

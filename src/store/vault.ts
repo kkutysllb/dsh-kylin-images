@@ -253,12 +253,15 @@ export class Vault {
 
     const now = new Date().toISOString()
     const existing = this.data.channels.find((channel) => channel.id === id)
+    // 更新既有通道时，Key 留空表示「沿用已保存的密钥」。
+    // 界面永远只回显脱敏串，若此处直接落空串，用户改一次类型就会把密钥抹掉。
+    const effectiveApiKey = existing !== undefined && apiKey === '' ? existing.apiKey : apiKey
     const record: ChannelRecord = {
       id,
       label,
       kind: kind as ChannelKind,
       baseUrl,
-      apiKey,
+      apiKey: effectiveApiKey,
       models,
       enabled: input['enabled'] !== false,
       createdAt: existing?.createdAt ?? now,
