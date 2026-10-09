@@ -226,6 +226,8 @@ window.__ModuleLoader__.load({
     function ensureStyles() {
       if (typeof document === 'undefined') return null;
       if (document.getElementById(STYLE_ID) !== null) return null;
+      // 下拉箭头（mask 用，填色由 CSS 的 background 提供，自动跟随主题明暗）
+      var CHEVRON = 'data:image/svg+xml,' + encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 6"><path d="M1 1l4 4 4-4" fill="none" stroke="#000" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>');
       var style = document.createElement('style');
       style.id = STYLE_ID;
       style.textContent = [
@@ -258,7 +260,15 @@ window.__ModuleLoader__.load({
         '.kimg-field input::placeholder{color:var(--dsw-alias-label-tertiary,#8a919c)}',
         '.kimg-field input:hover,.kimg-field select:hover{border-color:var(--dsw-alias-border-l3,rgba(127,127,127,.4))}',
         '.kimg-field input:focus,.kimg-field select:focus{outline:none;border-color:var(--dsw-alias-brand-primary,#4c7dff);'
-          + 'box-shadow:0 0 0 3px var(--dsw-alias-focus-ring,rgba(76,125,255,.16))}',
+          + 'box-shadow:0 0 0 3px rgba(127,127,127,.16);'
+          + 'box-shadow:0 0 0 3px color-mix(in srgb, var(--dsw-alias-brand-primary) 18%, transparent)}',
+        // 下拉：原生箭头贴边且无法控制间距，自绘 chevron 并留出固定空间
+        '.kimg-field select{appearance:none;-webkit-appearance:none;cursor:pointer;padding-right:32px}',
+        '.kimg-selectwrap{position:relative;min-width:0}',
+        '.kimg-selectwrap::after{content:\'\';position:absolute;right:12px;top:50%;width:10px;height:6px;transform:translateY(-50%);pointer-events:none;'
+          + 'background:var(--dsw-alias-label-tertiary,#8a919c);'
+          + '-webkit-mask:url("' + CHEVRON + '") center / contain no-repeat;'
+          + 'mask:url("' + CHEVRON + '") center / contain no-repeat}',
         // 按钮：主按钮实底、次按钮描边、危险按钮红字，悬浮有反馈
         '.kimg-actions{display:flex;align-items:center;gap:10px;flex-wrap:wrap}',
         '.kimg-card>.kimg-actions{margin-top:18px;padding-top:14px;border-top:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.12))}',
@@ -549,14 +559,15 @@ window.__ModuleLoader__.load({
     function select(name, label, value, options, onChange) {
       return React.createElement('div', { className: 'kimg-field', key: name },
         React.createElement('label', null, label),
-        React.createElement('select', {
-          value: value === undefined || value === null ? '' : value,
-          onChange: function (event) { onChange(event.target.value); },
-        }, options.map(function (option) {
-          var optionValue = (typeof option === 'object' && option !== null) ? option.value : option;
-          var optionLabel = (typeof option === 'object' && option !== null) ? (option.label || option.value) : option;
-          return React.createElement('option', { key: optionValue, value: optionValue }, optionLabel);
-        })));
+        React.createElement('div', { className: 'kimg-selectwrap' },
+          React.createElement('select', {
+            value: value === undefined || value === null ? '' : value,
+            onChange: function (event) { onChange(event.target.value); },
+          }, options.map(function (option) {
+            var optionValue = (typeof option === 'object' && option !== null) ? option.value : option;
+            var optionLabel = (typeof option === 'object' && option !== null) ? (option.label || option.value) : option;
+            return React.createElement('option', { key: optionValue, value: optionValue }, optionLabel);
+          }))));
     }
 
     /* ── 侧边栏「图像工坊」：漫画项目与产物 ─────────────────── */

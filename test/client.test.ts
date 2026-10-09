@@ -191,6 +191,10 @@ test('通道类型选择器覆盖服务端全部 CHANNEL_KINDS（UI 与契约不
   assert.ok(source.includes('kindHint'), '选项应带本地化说明，而不是裸 id')
   // select() 必须支持 { value, label } 形态的选项
   assert.ok(source.includes('optionValue'))
+  // 下拉箭头自绘：原生箭头画在 padding 里贴边，appearance:none + mask chevron 才可控
+  assert.ok(source.includes('kimg-selectwrap'), '下拉应有 wrapper 以承载自绘箭头')
+  assert.ok(source.includes('appearance:none'), '应去掉原生箭头')
+  assert.ok(/CHEVRON/.test(source), '箭头应使用内联 SVG mask，颜色跟随主题')
 })
 
 test('设置页面板真实渲染：类型下拉列出 openai-responses，且渲染不抛异常', async () => {
