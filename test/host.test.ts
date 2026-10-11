@@ -169,10 +169,20 @@ test('工具面：注册六个 img_* 工具且输出可读', async () => {
     assert.ok(composeOutput.includes('SUBJECT: tool mug'))
     const generateOutput = await tools[3]!.execute({ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'tool mug' } })
     assert.ok(generateOutput.includes('已通过通道 mock'))
-    const missingSubject = await tools[3]!.execute({ prompt: { text: '' } })
-    assert.ok(missingSubject.includes('缺少 subject'))
+    // 错误必须抛出（宿主转 isError:true）：按普通字符串返回会让下游把失败当成功
+    await assert.rejects(() => tools[3]!.execute({ prompt: { text: '' } }), /缺少 subject/)
     const batchOutput = await tools[4]!.execute({ items: [{ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'page one' } }, { prompt: { schemaVersion: 1, intent: 'single-image', subject: 'page two' } }], concurrency: 2 })
     assert.ok(batchOutput.includes('批量完成：新生成 2'))
+    // 无通道 → error → 抛出（isError），不得以普通字符串蒙混
+    const bare = createTools(createRuntime(mkdtempSync(join(process.cwd(), '.scratch', 'bare-'))))
+    await assert.rejects(
+      () => bare[3]!.execute({ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'no channel' } }),
+      /尚未配置可用的图像通道/,
+    )
+    // 确认成本是控制流不是错误：未知价模型必须仍按普通文本返回确认请求
+    runtime.vault.upsert({ id: 'mystery', label: '未知价', kind: 'mock', models: ['mystery-model'] })
+    const confirmOutput = await tools[3]!.execute({ prompt: { schemaVersion: 1, intent: 'single-image', subject: 'priced later' }, channelId: 'mystery' })
+    assert.ok(confirmOutput.includes('需要先确认成本'))
   })
 })
 

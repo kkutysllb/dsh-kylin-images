@@ -6,7 +6,7 @@ import { OpenAiResponsesProvider, buildResponsesBody, extractImageCalls, imageTo
 import { effectiveSizeStyle } from '../src/provider/catalog.ts'
 import { ImageProviderError } from '../src/provider/errors.ts'
 import type { ChannelRecord, GenerateRequest } from '../src/provider/types.ts'
-import { cleanup, jsonResponse, makeFetch, tempDir, tinyPng } from './helpers.ts'
+import { bytesResponse, cleanup, jsonResponse, makeFetch, tempDir, tinyPng } from './helpers.ts'
 
 function channel(overrides: Partial<ChannelRecord> = {}): ChannelRecord {
   return {
@@ -74,6 +74,54 @@ test('响应解析：只取 image_generation_call，忽略推理与文本项', (
   assert.equal(calls[0]?.revisedPrompt, 'rev')
   assert.deepEqual(extractImageCalls({ output: [] }), [])
   assert.deepEqual(extractImageCalls({}), [])
+})
+
+test('兜底采集：Firefly 系把预签名 URL 藏在消息文本里时能捞回', () => {
+  const calls = extractImageCalls({
+    output: [{ type: 'message', content: [{ type: 'output_text', text: '已生成：https://firefly-output.s3.amazonaws.com/images/out.png?X-Amz-Signature=abc。请查收' }] }],
+  })
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.status, 'completed')
+  assert.equal(calls[0]?.url, 'https://firefly-output.s3.amazonaws.com/images/out.png?X-Amz-Signature=abc')
+})
+
+test('兜底采集边界：非图像特征不捞、同 URL 去重、标准形态优先', () => {
+  // 无图像特征的普通链接不捞（revised_prompt / 文档链接不得被当产物）
+  assert.deepEqual(
+    extractImageCalls({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'docs: https://example.com/page see also' }] }] }),
+    [],
+  )
+  // 同一 URL 出现在多个字段 → 去重为一条
+  const duplicated = {
+    output: [{ type: 'message', content: [{ type: 'output_text', text: 'https://b.s3.amazonaws.com/a.png?sig=1' }] }],
+    system: 'mirror https://b.s3.amazonaws.com/a.png?sig=1 done.',
+  }
+  assert.equal(extractImageCalls(duplicated).length, 1)
+  // 标准形态存在时不做文本采集（revised_prompt 里的链接不得当第二张图）
+  const standard = {
+    output: [{ type: 'image_generation_call', status: 'completed', result: 'AAAA', revised_prompt: 'see https://b.s3.amazonaws.com/a.png?sig=1' }],
+  }
+  const calls = extractImageCalls(standard)
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.result, 'AAAA')
+})
+
+test('生成：文本藏 URL 的响应能落盘（双形态通吃，不再产生孤儿）', async () => {
+  const dir = tempDir('resp-url-')
+  try {
+    const stub = makeFetch((call) => {
+      if (call.method === 'POST') {
+        return jsonResponse({ output: [{ type: 'message', content: [{ type: 'output_text', text: 'done https://bucket.s3.amazonaws.com/x/img.png?X-Amz-Signature=z' }] }] })
+      }
+      return bytesResponse(tinyPng())
+    })
+    const provider = new OpenAiResponsesProvider()
+    const result = await provider.generate(channel(), request(dir, { http: { fetchImpl: stub.impl } }))
+    assert.equal(result.images.length, 1)
+    assert.ok(statSync(result.images[0]!.path).size > 0)
+    const download = stub.calls.find((call) => call.method === 'GET')
+    assert.ok(download !== undefined && download.url.includes('s3.amazonaws.com'))
+  } finally { cleanup(dir) }
 })
 
 test('图像 token 用量读取（成本按 token 计）', () => {

@@ -1,6 +1,6 @@
 {
   "name": "dsh-kylin-images",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "麒麟（QiLin）/ DSH 双通道图像创作插件：Prompt-as-Code 样式库 + 确定性提示词编译器 + 知识漫画管线 + 视觉模型配置菜单",
   "keywords": [
     "deepseek-harness",

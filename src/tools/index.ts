@@ -307,7 +307,13 @@ function generateTool(runtime: PluginRuntime): ToolDefinition {
         templatePitfalls: pitfalls,
         referenceImages: stringList(args['referenceImages']),
       }
-      return describeOutcome(await runGeneration(runtime, input))
+      const outcome = await runGeneration(runtime, input)
+      // 上游/输入错误必须抛出：宿主注册表把抛错转成 isError:true 的结构化结果；
+      // 若按普通字符串返回，下游调用方（编排脚本 / 上游 agent）会把失败当成功
+      // —— 真机踩过：M0 定妆照管线因此误判。确认成本（confirm-required）是
+      // 控制流不是错误，仍按普通文本返回，模型读到后带 confirm=true 重调。
+      if (outcome.kind === 'error') throw new Error(describeOutcome(outcome))
+      return describeOutcome(outcome)
     },
   }
 }

@@ -45,20 +45,61 @@ export interface ResponsesImageCall {
   revisedPrompt?: string
 }
 
-/** 从 Responses 响应里取出所有 image_generation_call 项。 */
+/** 文本里疑似图像产物的 URL 特征（Firefly 系中转的预签名 S3 链接 / 图像路径）。 */
+const IMAGE_URL_SIGNATURE = /amazonaws|firefly|\/images?(\/|$)|\.(png|jpe?g|webp)([?#]|$)/i
+/** URL 字符集：ASCII 合法字符，排除引号与括号（不吞 markdown 包裹，中文标点自然截断）。 */
+const TEXT_URL_PATTERN = /https:\/\/[A-Za-z0-9\-._~:\/?#[\]@!$&*+,;=%]+/g
+
+/**
+ * 兜底采集：上游有时不回 image_generation_call，而是把预签名图片 URL 藏在
+ * 消息文本里（真机实证：同一模型随机轮换「标准 base64」与「文本藏 URL」两种
+ * 形态）。只捞带图像特征的 URL，避免把 revised_prompt 里的普通链接当产物；
+ * 同 URL 去重。
+ */
+export function harvestTextImageUrls(body: unknown): string[] {
+  const found: string[] = []
+  const seen = new Set<string>()
+  const walk = (value: unknown): void => {
+    if (typeof value === 'string') {
+      for (const match of value.matchAll(TEXT_URL_PATTERN)) {
+        const url = match[0].replace(/[.,;:!?]+$/, '')
+        if (url.length < 12 || seen.has(url) || !IMAGE_URL_SIGNATURE.test(url)) continue
+        seen.add(url)
+        found.push(url)
+      }
+      return
+    }
+    if (Array.isArray(value)) {
+      for (const item of value) walk(item)
+      return
+    }
+    if (isRecord(value)) {
+      for (const child of Object.values(value)) walk(child)
+    }
+  }
+  walk(body)
+  return found
+}
+
+/** 从 Responses 响应里取出所有 image_generation_call 项；标准形态缺席时退回文本 URL 兜底。 */
 export function extractImageCalls(body: unknown): ResponsesImageCall[] {
   const output = pickPath(body, ['output'])
-  if (!Array.isArray(output)) return []
   const calls: ResponsesImageCall[] = []
-  for (const item of output) {
-    if (!isRecord(item)) continue
-    if (item['type'] !== 'image_generation_call') continue
-    const call: ResponsesImageCall = { status: typeof item['status'] === 'string' ? item['status'] : 'unknown' }
-    if (typeof item['result'] === 'string' && item['result'] !== '') call.result = item['result']
-    const urls = asUrlList(item['url'])
-    if (urls[0] !== undefined) call.url = urls[0]
-    if (typeof item['revised_prompt'] === 'string') call.revisedPrompt = item['revised_prompt']
-    calls.push(call)
+  if (Array.isArray(output)) {
+    for (const item of output) {
+      if (!isRecord(item)) continue
+      if (item['type'] !== 'image_generation_call') continue
+      const call: ResponsesImageCall = { status: typeof item['status'] === 'string' ? item['status'] : 'unknown' }
+      if (typeof item['result'] === 'string' && item['result'] !== '') call.result = item['result']
+      const urls = asUrlList(item['url'])
+      if (urls[0] !== undefined) call.url = urls[0]
+      if (typeof item['revised_prompt'] === 'string') call.revisedPrompt = item['revised_prompt']
+      calls.push(call)
+    }
+  }
+  if (calls.length === 0) {
+    // 图已计费，解析扑空就是孤儿产物 —— 必须把藏进文本的 URL 捞回来。
+    for (const url of harvestTextImageUrls(body)) calls.push({ status: 'completed', url })
   }
   return calls
 }
@@ -235,7 +276,7 @@ export class OpenAiResponsesProvider implements ImageProvider {
     const calls = extractImageCalls(response.body)
     if (calls.length === 0) {
       const message = pickPath(response.body, ['error', 'message'])
-      throw new ImageProviderError('BAD_RESPONSE', '响应里没有 image_generation_call 项', {
+      throw new ImageProviderError('BAD_RESPONSE', '响应里既没有 image_generation_call 项，也没有可辨识的图片 URL', {
         detail: typeof message === 'string' ? message : JSON.stringify(response.body ?? {}).slice(0, 400),
       })
     }
