@@ -42,7 +42,7 @@ test('client.js 自注册且暴露 apply/inject（裸 ESM 会被宿主拒绝）'
   const mod = loadClient()
   assert.equal(typeof mod.apply, 'function')
   // 跨 VM realm 的数组原型不同，先归一化再比较
-  assert.deepEqual(Array.from(mod.inject), ['slots'])
+  assert.deepEqual(Array.from(mod.inject), ['slots', 'locale'])
   assert.ok(!source.includes('export function apply'), '不允许裸 ESM 导出')
   assert.ok(source.includes('__ModuleLoader__.load'), '必须经 ModuleLoader 自注册')
 })
@@ -72,6 +72,65 @@ test('apply 只注册设置页与插件详情页，不占 workspace 侧边栏', 
   // 插件详情页配置卡（与设置页共用同一份表单）
   assert.equal(registered[2]?.['name'], 'plugins.bundle.config')
   assert.equal(registered[2]?.['key'], 'dsh-kylin-images')
+})
+
+test('双语接入宿主 locale 服务：注册摊平字典并把 t 切到绑定译函', () => {
+  const mod = loadClient()
+  const calls: Array<{ ns: string; dicts: Record<string, Record<string, unknown>> }> = []
+  let boundNs = ''
+  const locale = {
+    register(ns: string, dicts: Record<string, Record<string, unknown>>) {
+      calls.push({ ns, dicts })
+      return () => undefined
+    },
+    bind(ns: string) {
+      boundNs = ns
+      // 模拟 LocaleRuntime.bind：调用时读当前语言，未命中原样回 key
+      return (key: string) => {
+        const dicts = calls.find((c) => c.ns === ns)?.dicts ?? {}
+        const hit = dicts.zh?.[key] ?? dicts.en?.[key]
+        return hit === undefined ? key : hit
+      }
+    },
+  }
+  const injected: string[] = []
+  const registered: Array<Record<string, unknown>> = []
+  const ctx = {
+    effect: (register: () => unknown) => register(),
+    locale,
+    slots: {
+      inject: (seat: string, register: () => unknown) => { injected.push(seat); return register() },
+      register: (options: Record<string, unknown>) => { registered.push(options); return () => undefined },
+    },
+  }
+  mod.apply(ctx)
+  // 字典注册：一个命名空间、zh/en 双语、全扁平（嵌套 kindHint 摊平成点键）
+  assert.equal(calls.length, 1)
+  assert.equal(calls[0]?.ns, 'kylinImages')
+  const zh = calls[0]?.dicts.zh ?? {}
+  assert.equal(typeof zh['intro'], 'string', '普通键原样保留')
+  assert.equal(typeof zh['kindHint.mock'], 'string', '嵌套 kindHint 应摊平为 kindHint.<kind> 点键')
+  assert.equal(zh['kindHint.mock'], '本地模拟：零密钥跑通全链路')
+  for (const value of Object.values(zh)) assert.equal(typeof value, 'string', 'locale 字典不允许嵌套对象')
+  // t 已切换为绑定译函：label thunk 走 ctx.locale.bind('kylinImages') 的返回值
+  assert.equal(boundNs, 'kylinImages')
+  const label0 = registered[0]?.['label'] as (() => string) | undefined
+  assert.equal(label0?.(), '视觉模型')
+})
+
+test('老引擎无 locale 面时保持 navigator 兜底（缺 ctx.locale 不炸）', () => {
+  const mod = loadClient()
+  const registered: Array<Record<string, unknown>> = []
+  const ctx = {
+    effect: (register: () => unknown) => register(),
+    slots: {
+      inject: (_seat: string, register: () => unknown) => register(),
+      register: (options: Record<string, unknown>) => { registered.push(options); return () => undefined },
+    },
+  }
+  mod.apply(ctx)
+  const label0 = registered[0]?.['label'] as (() => string) | undefined
+  assert.equal(label0?.(), '视觉模型', '沙箱 navigator.language=zh-CN，兜底译函应命中中文')
 })
 
 test('图像工坊走插件产物路由，且不直接读盘', () => {

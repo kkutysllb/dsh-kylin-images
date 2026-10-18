@@ -146,9 +146,35 @@ window.__ModuleLoader__.load({
       },
     };
 
-    function t(key) {
+    /* locale 字典必须扁平（Record<string,string>）：嵌套的 kindHint 摊平成
+     * 'kindHint.<kind>' 点键注册；取用侧 kindHint() 先查点键、再回退对象。 */
+    function flattenDict(dict) {
+      var out = {};
+      for (var key in dict) {
+        var value = dict[key];
+        if (value && typeof value === 'object') {
+          for (var sub in value) out[key + '.' + sub] = value[sub];
+        } else {
+          out[key] = value;
+        }
+      }
+      return out;
+    }
+
+    /* 兜底译函：只看浏览器环境语言（老引擎没有 locale 面时的行为）。
+     * apply() 接入 ctx.locale 后会把它覆写为「调用时读应用语言」的绑定译函。 */
+    var t = function (key) {
       var lang = typeof navigator !== 'undefined' && navigator.language && navigator.language.toLowerCase().indexOf('zh') === 0 ? zh : en;
       return lang[key] || key;
+    };
+
+    /* 通道类型提示：locale 绑定译函未命中时原样回 key，据此区分两种译函。 */
+    function kindHint(value) {
+      var key = 'kindHint.' + value;
+      var flat = t(key);
+      if (typeof flat === 'string' && flat !== '' && flat !== key) return flat;
+      var map = t('kindHint');
+      return map && typeof map === 'object' ? (map[value] || '') : '';
     }
 
     /* ── 设置页导航字形 ────────────────────────────────────────────
@@ -347,9 +373,8 @@ window.__ModuleLoader__.load({
     }
 
     function kindOptions() {
-      var hints = t('kindHint') || {};
       return KIND_VALUES.map(function (value) {
-        var hint = hints[value];
+        var hint = kindHint(value);
         return { value: value, label: hint ? value + ' — ' + hint : value };
       });
     }
@@ -666,9 +691,20 @@ window.__ModuleLoader__.load({
             })));
     }
 
-    var inject = ['slots'];
+    var inject = ['slots', 'locale'];
 
     function apply(ctx) {
+      /* 双语接入宿主 locale 服务（QiLin ctx.provide('locale')，DSH 同名面）：
+       * 注册本插件命名空间字典，并把 t 覆写为「调用时读当前应用语言」的绑定
+       * 译函——账户菜单切语言即时生效；无 locale 面的老引擎保持上方 navigator
+       * 兜底。放在导航字形 effect 之前，保证首帧即用对语言。 */
+      if (ctx && ctx.locale && typeof ctx.locale.register === 'function' && typeof ctx.locale.bind === 'function') {
+        ctx.effect(function () {
+          return ctx.locale.register('kylinImages', { zh: flattenDict(zh), en: flattenDict(en) });
+        }, 'dsh-kylin-images: locale dictionaries');
+        t = ctx.locale.bind('kylinImages');
+      }
+
       var removeStyles = ensureStyles();
       if (removeStyles !== null && ctx && typeof ctx.effect === 'function') {
         ctx.effect(function () { return removeStyles; }, 'dsh-kylin-images: settings styles');
