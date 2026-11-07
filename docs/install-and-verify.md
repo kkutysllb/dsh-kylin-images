@@ -16,7 +16,7 @@
     cd /path/to/dsh-kylin-images
     npm install
     npm run typecheck     # 期望：无输出（无类型错误）
-    npm test              # 期望：tests 164 / pass 164 / fail 0
+    npm test              # 期望：tests 170 / pass 170 / fail 0
     npm run sync:upstream:check   # 期望：上游对账通过 commit 65a9c57a1968
     npm run build         # 期望：生成 lib/
 
@@ -41,7 +41,8 @@
     curl -sS http://127.0.0.1:<port>/dsh-kylin-images/api/state
 
 **验收点 3**：插件详情页出现「视觉模型」配置卡（plugins.bundle.config 座席），
-另有设置页导航「视觉模型」兜底项（settings.section）。卡片能列通道、保存后回显脱敏串。
+另有设置页导航**唯一一个**「图像工坊」条目（settings.section）——注意是**一个**菜单项、**一个**图标：
+一个插件只注册一个设置页菜单，配置与漫画项目是同一页里的两个页签。卡片能列通道、保存后回显脱敏串。
 
 **验收点 3c**：通道行有**「编辑」**按钮：点开会把该通道读进表单（含 id），保存后**原地更新**而不是新开一条，
 且 Key 留空时**沿用已保存的密钥**（界面只回显脱敏串，无法回填明文）。
@@ -104,7 +105,7 @@ warnings 里给出「建议把该通道的类型直接改成 openai-responses」
 期望的工具调用序列：img_comic open -> plan -> sheet -> render -> assemble。
 
 **验收点 6**：img_comic status id=<项目> 显示 3/3 页已出图、图像锁 开；
-侧边栏「图像工坊」能看到该项目、展开有缩略图、能打开联系表。
+设置 → 「图像工坊」→「漫画项目」页签能看到该项目、展开有缩略图、能打开联系表。
 
 **验收点 7（关键）**：跨页角色形象一致；中文对白逐字正确（不是乱码或错字）。
 

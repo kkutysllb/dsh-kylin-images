@@ -23,11 +23,13 @@ window.__ModuleLoader__.load({
 
     var API = '/dsh-kylin-images/api';
     var STYLE_ID = 'kimg-styles';
-    var SECTION_ID = 'kylin-images-vision-model';
+    var SECTION_ID = 'kylin-images';
 
     var zh = {
-      nav: '视觉模型',
-      title: '视觉模型',
+      nav: '图像工坊',
+      tabVision: '视觉模型',
+      tabProjects: '漫画项目',
+      title: '图像工坊',
       intro: '决定「用什么画、画成什么样」：通道与模型、生成默认值、全局负面词、成本与缓存。API Key 只保存在本机插件数据目录（0600），界面永远只显示脱敏串。',
       channels: '通道',
       channelsSub: '已配置的图像通道。密钥只保存在本机、界面只显示脱敏串；可编辑、测试或删除。',
@@ -56,7 +58,6 @@ window.__ModuleLoader__.load({
       cache: '结果缓存',
       spend: '累计消耗',
       realRun: '探测时小额实跑（会产生费用）',
-      workbench: '图像工坊',
       workbenchIntro: '知识漫画项目：逐页产物与联系表。出图请直接在会话里让模型调用 img_comic。',
       workbenchEmpty: '还没有漫画项目。在会话里说「把这段内容做成知识漫画」即可开一个。',
       refresh: '刷新',
@@ -86,8 +87,10 @@ window.__ModuleLoader__.load({
       },
     };
     var en = {
-      nav: 'Vision model',
-      title: 'Vision model',
+      nav: 'Image studio',
+      tabVision: 'Vision model',
+      tabProjects: 'Comic projects',
+      title: 'Image studio',
       intro: 'Controls what draws and how it looks: channel and model, generation defaults, global negatives, cost and cache. The API key stays in this plugin\'s local data directory (0600); the UI only ever shows a masked string.',
       channels: 'Channels',
       channelsSub: 'Configured image channels. Keys stay on this machine and are always masked; edit, test or remove.',
@@ -116,7 +119,6 @@ window.__ModuleLoader__.load({
       cache: 'Result cache',
       spend: 'Accumulated spend',
       realRun: 'Run one small real generation while probing (costs money)',
-      workbench: 'Image studio',
       workbenchIntro: 'Knowledge-comic projects: per-page artifacts and the contact sheet. Ask the model to call img_comic in chat to render.',
       workbenchEmpty: 'No comic project yet. Say "turn this into a knowledge comic" in chat to start one.',
       refresh: 'Refresh',
@@ -184,13 +186,10 @@ window.__ModuleLoader__.load({
      * 画自定义字形；MutationObserver 跟随语言切换与弹窗重开，disposer 清标记。
      * 缺 DOM/Observer 时为空操作。
      */
-    var NAV_VISION = 'data-kimg-nav-vision';
-    var NAV_COMIC = 'data-kimg-nav-comic';
+    var NAV_IMAGES = 'data-kimg-nav-images';
 
-    // 视觉模型：图像框 + 火花（生成）——与相机/齿轮区分开
-    var NAV_VISION_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='4.5' width='16' height='16' rx='2.5'/%3E%3Ccircle cx='7.6' cy='10.2' r='1.6'/%3E%3Cpath d='M2.5 17.6l4.1-4.1a2 2 0 0 1 2.8 0l4 4'/%3E%3Cpath d='M20 2.5v4.4M17.8 4.7h4.4'/%3E%3C/svg%3E";
-    // 图像工坊：漫画分格页（上通栏 + 下两格）——与列表/网格类图标区分开
-    var NAV_COMIC_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='2.5' width='19' height='19' rx='2.5'/%3E%3Cpath d='M2.5 11.5h19'/%3E%3Cpath d='M12 11.5v10'/%3E%3C/svg%3E";
+    // 图像工坊：图像框 + 火花（生成）——与相机/齿轮区分开
+    var NAV_IMAGES_SVG = "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='black' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='2.5' y='4.5' width='16' height='16' rx='2.5'/%3E%3Ccircle cx='7.6' cy='10.2' r='1.6'/%3E%3Cpath d='M2.5 17.6l4.1-4.1a2 2 0 0 1 2.8 0l4 4'/%3E%3Cpath d='M20 2.5v4.4M17.8 4.7h4.4'/%3E%3C/svg%3E";
 
     // 宿主不同代次把设置导航放在不同容器里：按序尝试，命中即止。
     // 已对当前宿主源码核实：设置面板为 body 门户模态（role=dialog + aria-modal=true），
@@ -236,17 +235,9 @@ window.__ModuleLoader__.load({
       };
     }
 
-    /** 两个设置页菜单各自换字形；返回组合 disposer。 */
+    /** 本插件唯一的设置页菜单换字形；返回 disposer。 */
     function registerNavIcons() {
-      var disposers = [
-        registerNavIcon(function () { return t('nav'); }, NAV_VISION),
-        registerNavIcon(function () { return t('workbench'); }, NAV_COMIC),
-      ];
-      return function () {
-        for (var index = 0; index < disposers.length; index += 1) {
-          try { disposers[index](); } catch (error) { /* 卸载期异常忽略 */ }
-        }
-      };
+      return registerNavIcon(function () { return t('nav'); }, NAV_IMAGES);
     }
 
     function ensureStyles() {
@@ -260,6 +251,17 @@ window.__ModuleLoader__.load({
         // 配色一律走宿主别名令牌（亮暗主题自动跟随），括号里只是令牌缺失时的兜底值
         '.kimg-root{display:flex;flex-direction:column;gap:20px;max-width:72em;font-size:13px;color:var(--dsw-alias-label-primary,#1f2329)}',
         '.kimg-intro{margin:0;color:var(--dsw-alias-label-secondary,#5c6470);font-size:13px;line-height:1.75}',
+        // 页签条：一个设置页菜单里分「视觉模型 / 漫画项目」两页，而不是两个菜单项
+        '.kimg-tabs{display:flex;align-items:center;gap:4px;padding:4px;align-self:flex-start;'
+          + 'border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.14));border-radius:var(--dsw-radius-sm,10px);'
+          + 'background:var(--dsw-alias-bg-layer-2,rgba(127,127,127,.05))}',
+        '.kimg-tab{appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-secondary,#5c6470);'
+          + 'font:inherit;font-size:12.5px;line-height:1.2;padding:7px 16px;border-radius:calc(var(--dsw-radius-sm,10px) - 3px);'
+          + 'cursor:pointer;transition:background-color .16s ease,color .16s ease}',
+        '.kimg-tab:hover{color:var(--dsw-alias-label-primary,#1f2329)}',
+        '.kimg-tab[data-active=true]{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-1,#fff));'
+          + 'color:var(--dsw-alias-label-primary,#1f2329);box-shadow:0 1px 2px rgba(0,0,0,.08)}',
+        '.kimg-tab:focus-visible{outline:2px solid var(--dsw-alias-brand-primary,#4c7dff);outline-offset:2px}',
         // 卡片：宿主设置卡专用的 fill/stroke 令牌，圆角与留白放大一档，做出「版面感」
         '.kimg-card{background:var(--dsw-alias-settings-card-fill,var(--dsw-alias-bg-layer-2,transparent));'
           + 'border:1px solid var(--dsw-alias-settings-card-stroke,var(--dsw-alias-border-l2,rgba(127,127,127,.22)));'
@@ -330,18 +332,14 @@ window.__ModuleLoader__.load({
         '.kimg-thumbs img{width:200px;max-width:100%;border-radius:var(--dsw-radius-sm,8px);border:1px solid var(--dsw-alias-border-l1,rgba(127,127,127,.12));display:block}',
         '@keyframes kimg-pulse{0%,100%{opacity:1}50%{opacity:.45}}',
         '@media (prefers-reduced-motion:reduce){.kimg-root *{transition:none!important;animation:none!important}}',
-        // 设置页导航字形：隐藏壳层 SVG，用 ::before + mask 画自定义字形
-        // 壳层字形可能直接是子元素，也可能被一层 span 包着：两种都隐藏
-        '[' + NAV_VISION + '] > svg:first-child,'
-          + '[' + NAV_VISION + '] > span:first-child > svg:first-child{display:none;}',
-        '[' + NAV_VISION + ']::before{content:\'\';flex:none;width:16px;height:16px;background:currentColor;'
-          + '-webkit-mask:url("' + NAV_VISION_SVG + '") center / contain no-repeat;'
-          + 'mask:url("' + NAV_VISION_SVG + '") center / contain no-repeat;}',
-        '[' + NAV_COMIC + '] > svg:first-child,'
-          + '[' + NAV_COMIC + '] > span:first-child > svg:first-child{display:none;}',
-        '[' + NAV_COMIC + ']::before{content:\'\';flex:none;width:16px;height:16px;background:currentColor;'
-          + '-webkit-mask:url("' + NAV_COMIC_SVG + '") center / contain no-repeat;'
-          + 'mask:url("' + NAV_COMIC_SVG + '") center / contain no-repeat;}',
+        // 设置页导航字形：隐藏壳层字形，用 ::before + mask 画自定义字形。
+        // 壳层字形在不同引擎代次里可能是 > svg、被 span 包一层、或换成 img：
+        // 一律隐藏标记行内的所有 svg/img，避免与自定义字形叠成「两个图标」。
+        '[' + NAV_IMAGES + '] svg,'
+          + '[' + NAV_IMAGES + '] img{display:none;}',
+        '[' + NAV_IMAGES + ']::before{content:\'\';flex:none;width:16px;height:16px;background:currentColor;'
+          + '-webkit-mask:url("' + NAV_IMAGES_SVG + '") center / contain no-repeat;'
+          + 'mask:url("' + NAV_IMAGES_SVG + '") center / contain no-repeat;}',
       ].join('');
       document.head.appendChild(style);
       return function () { if (style.parentNode) style.parentNode.removeChild(style); };
@@ -595,9 +593,7 @@ window.__ModuleLoader__.load({
           }))));
     }
 
-    /* ── 侧边栏「图像工坊」：漫画项目与产物 ─────────────────── */
-
-    var WORKBENCH_ID = 'kylin-images-workbench';
+    /* ── 「图像工坊」页签：漫画项目与产物 ─────────────────── */
 
     function artifactUrl(relative) {
       return '/dsh-kylin-images/artifact?path=' + encodeURIComponent(relative);
@@ -691,6 +687,39 @@ window.__ModuleLoader__.load({
             })));
     }
 
+    /* ── 设置页唯一入口「图像工坊」：两个页签 ──────────────────────────
+     * 一个插件只注册一个 settings.section：宿主把它投影成设置页左侧导航的一行
+     * （一个图标）。曾经拆成「视觉模型」「图像工坊」两个菜单项，真机新引擎里
+     * 并排出现两个图标，也把同一个插件的配置与产物割裂成两处入口——现合并为
+     * 同一设置页里的两个页签，导航仍只有一项。 */
+    var TAB_CONFIG = 'config';
+    var TAB_PROJECTS = 'projects';
+
+    function SettingsPage() {
+      var tabHook = React.useState(TAB_CONFIG);
+      var tab = tabHook[0];
+      var setTab = tabHook[1];
+
+      function tabButton(value, label) {
+        return React.createElement('button', {
+          type: 'button',
+          role: 'tab',
+          className: 'kimg-tab',
+          'data-active': tab === value ? 'true' : 'false',
+          'aria-selected': tab === value ? 'true' : 'false',
+          onClick: function () { setTab(value); },
+        }, label);
+      }
+
+      return React.createElement('div', { className: 'kimg-root' },
+        React.createElement('div', { className: 'kimg-tabs', role: 'tablist' },
+          tabButton(TAB_CONFIG, t('tabVision')),
+          tabButton(TAB_PROJECTS, t('tabProjects'))),
+        tab === TAB_PROJECTS
+          ? React.createElement(ImageWorkbenchPanel, { key: 'kimg-projects' })
+          : React.createElement(VisionModelCard, { key: 'kimg-config' }));
+    }
+
     var inject = ['slots', 'locale'];
 
     function apply(ctx) {
@@ -727,20 +756,14 @@ window.__ModuleLoader__.load({
         }
       }
 
-      // 主面：**设置页面**的「视觉模型」菜单（本插件的配置入口就在这里）。
-      // 不占用 workspace 侧边栏 —— 配置属于设置页，不属于工作区侧栏。
+      // 设置页唯一菜单「图像工坊」：配置与漫画项目同页两页签。
+      // 只注册一个 settings.section —— 一个插件一个设置项，多注册一个就会在
+      // 设置页导航里多出一行、多一个图标。不占用 workspace 侧边栏。
       bindSeat('settings.section', {
         id: SECTION_ID,
         order: 20,
         label: function () { return t('nav'); },
-      }, VisionModelCard, 'settings.section(视觉模型)');
-
-      // 同一设置页里的第二个菜单：知识漫画项目与产物。
-      bindSeat('settings.section', {
-        id: WORKBENCH_ID,
-        order: 21,
-        label: function () { return t('workbench'); },
-      }, ImageWorkbenchPanel, 'settings.section(图像工坊)');
+      }, SettingsPage, 'settings.section(图像工坊)');
 
       // 插件详情页的配置卡（插件管理器页面），与设置页共用同一份表单。
       bindSeat('plugins.bundle.config', { key: 'dsh-kylin-images' }, VisionModelCard, 'plugins.bundle.config');

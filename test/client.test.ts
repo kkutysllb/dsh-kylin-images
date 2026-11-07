@@ -47,7 +47,7 @@ test('client.js 自注册且暴露 apply/inject（裸 ESM 会被宿主拒绝）'
   assert.ok(source.includes('__ModuleLoader__.load'), '必须经 ModuleLoader 自注册')
 })
 
-test('apply 只注册设置页与插件详情页，不占 workspace 侧边栏', () => {
+test('一个插件只注册一个设置页菜单：配置与工坊合并为同一入口', () => {
   const mod = loadClient()
   const injected: string[] = []
   const registered: Array<Record<string, unknown>> = []
@@ -59,19 +59,20 @@ test('apply 只注册设置页与插件详情页，不占 workspace 侧边栏', 
     },
   }
   mod.apply(ctx)
-  assert.deepEqual(injected, ['settings.section', 'settings.section', 'plugins.bundle.config'])
+  // 回归：曾经注册两个 settings.section，真机新引擎的设置页导航里并排出现
+  // 两个图标（「视觉模型」「图像工坊」）。一个插件只能有一个设置项。
+  assert.deepEqual(injected, ['settings.section', 'plugins.bundle.config'])
+  assert.equal(injected.filter((seat) => seat === 'settings.section').length, 1, 'settings.section 只能注册一次')
   assert.ok(!injected.includes('sidebar.panellist'), '配置菜单属于设置页，不得占用工作区侧边栏')
-  // 第一个设置页菜单 = 视觉模型配置（主入口）
+  // 唯一的设置页菜单 = 「图像工坊」（内含「视觉模型」「漫画项目」两个页签）
   assert.equal(registered[0]?.['name'], 'settings.section')
   const label0 = registered[0]?.['label'] as (() => string) | undefined
   assert.equal(typeof label0, 'function', 'label 应为函数（宿主按语言实时取值）')
-  assert.equal(label0?.(), '视觉模型')
-  // 第二个设置页菜单 = 图像工坊
-  const label1 = registered[1]?.['label'] as (() => string) | undefined
-  assert.equal(label1?.(), '图像工坊')
+  assert.equal(label0?.(), '图像工坊')
+  assert.ok(!source.includes('kylin-images-workbench'), '旧的第二个菜单 id 应已移除')
   // 插件详情页配置卡（与设置页共用同一份表单）
-  assert.equal(registered[2]?.['name'], 'plugins.bundle.config')
-  assert.equal(registered[2]?.['key'], 'dsh-kylin-images')
+  assert.equal(registered[1]?.['name'], 'plugins.bundle.config')
+  assert.equal(registered[1]?.['key'], 'dsh-kylin-images')
 })
 
 test('双语接入宿主 locale 服务：注册摊平字典并把 t 切到绑定译函', () => {
@@ -112,10 +113,14 @@ test('双语接入宿主 locale 服务：注册摊平字典并把 t 切到绑定
   assert.equal(typeof zh['kindHint.mock'], 'string', '嵌套 kindHint 应摊平为 kindHint.<kind> 点键')
   assert.equal(zh['kindHint.mock'], '本地模拟：零密钥跑通全链路')
   for (const value of Object.values(zh)) assert.equal(typeof value, 'string', 'locale 字典不允许嵌套对象')
+  // 合并后的页签文案也必须进字典（否则英文界面会显示裸 key）
+  assert.equal(zh['tabVision'], '视觉模型')
+  assert.equal(zh['tabProjects'], '漫画项目')
+  assert.equal(calls[0]?.dicts.en?.['nav'], 'Image studio')
   // t 已切换为绑定译函：label thunk 走 ctx.locale.bind('kylinImages') 的返回值
   assert.equal(boundNs, 'kylinImages')
   const label0 = registered[0]?.['label'] as (() => string) | undefined
-  assert.equal(label0?.(), '视觉模型')
+  assert.equal(label0?.(), '图像工坊')
 })
 
 test('老引擎无 locale 面时保持 navigator 兜底（缺 ctx.locale 不炸）', () => {
@@ -130,7 +135,7 @@ test('老引擎无 locale 面时保持 navigator 兜底（缺 ctx.locale 不炸�
   }
   mod.apply(ctx)
   const label0 = registered[0]?.['label'] as (() => string) | undefined
-  assert.equal(label0?.(), '视觉模型', '沙箱 navigator.language=zh-CN，兜底译函应命中中文')
+  assert.equal(label0?.(), '图像工坊', '沙箱 navigator.language=zh-CN，兜底译函应命中中文')
 })
 
 test('图像工坊走插件产物路由，且不直接读盘', () => {
@@ -143,26 +148,25 @@ test('客户端不再注册任何 workspace 侧边栏座席', () => {
   assert.ok(!source.includes('sidebar.panellist'), '不得注册 sidebar.panellist')
 })
 
-test('设置页导航字形：两个菜单各一个语义字形，且互相不同', () => {
-  assert.ok(source.includes('data-kimg-nav-vision'))
-  assert.ok(source.includes('data-kimg-nav-comic'))
-  const vision = /NAV_VISION_SVG = "([^"]+)"/.exec(source)?.[1] ?? ''
-  const comic = /NAV_COMIC_SVG = "([^"]+)"/.exec(source)?.[1] ?? ''
-  assert.ok(vision.startsWith('data:image/svg+xml,'), '视觉模型字形应为内联 SVG')
-  assert.ok(comic.startsWith('data:image/svg+xml,'), '图像工坊字形应为内联 SVG')
-  assert.notEqual(vision, comic, '两个菜单不得共用同一个字形')
-  assert.ok(!vision.includes('circle cx="12" cy="12" r="3"'), '不应退回通用相机/齿轮')
-  // 换字形的两条 CSS 规则都要在（隐藏壳层 SVG + ::before mask）
-  assert.ok(source.includes('> svg:first-child,'))
-  assert.ok(source.includes('> span:first-child > svg:first-child{display:none;}'), '壳层字形可能被 span 包一层')
-  assert.ok(source.includes('mask:url('))
+test('设置页导航字形：唯一菜单一个字形，且壳层字形全域隐藏（不会叠成两个图标）', () => {
+  assert.ok(source.includes('data-kimg-nav-images'))
+  const icon = /NAV_IMAGES_SVG = "([^"]+)"/.exec(source)?.[1] ?? ''
+  assert.ok(icon.startsWith('data:image/svg+xml,'), '图像工坊字形应为内联 SVG')
+  assert.ok(!icon.includes('circle cx="12" cy="12" r="3"'), '不应退回通用相机/齿轮')
+  // 合并后不得再留第二个/第三个导航字形标记
+  assert.ok(!/data-kimg-nav-(vision|comic)/.test(source), '合并后只保留一个导航字形标记')
+  // 隐藏壳层字形：不同引擎代次可能用 > svg、span 包一层、或 img，
+  // 因此按「标记行内所有 svg/img」隐藏——否则壳层字形与自定义字形同时出现。
+  assert.ok(source.includes("] svg,'"), '应隐藏标记行内的 svg')
+  assert.ok(source.includes('] img{display:none;}'), '壳层字形可能是 img，也要隐藏')
+  assert.ok(source.includes('mask:url('), '自定义字形走 currentColor mask')
 })
 
 test('导航行标记逻辑：按本地化文案命中，语言切换后重新标记', () => {
   const buttons = [
     { textContent: '通用设置', attrs: {} },
-    { textContent: '视觉模型', attrs: {} },
     { textContent: '图像工坊', attrs: {} },
+    { textContent: '多媒体网关', attrs: {} },
   ].map((item) => ({
     textContent: item.textContent,
     attrs: item.attrs as Record<string, string>,
@@ -214,12 +218,12 @@ test('导航行标记逻辑：按本地化文案命中，语言切换后重新�
   mod.apply({
     effect: (register: () => unknown) => { const dispose = register(); if (typeof dispose === 'function') disposers.push(dispose as () => void); return dispose },
   })
-  assert.ok(buttons[1]?.attrs['data-kimg-nav-vision'] !== undefined, '「视觉模型」行应被标记')
-  assert.ok(buttons[2]?.attrs['data-kimg-nav-comic'] !== undefined, '「图像工坊」行应被标记')
-  assert.equal(buttons[0]?.attrs['data-kimg-nav-vision'], undefined, '别人的行不得被标记')
+  assert.ok(buttons[1]?.attrs['data-kimg-nav-images'] !== undefined, '「图像工坊」行应被标记')
+  assert.equal(buttons[0]?.attrs['data-kimg-nav-images'], undefined, '别人的行不得被标记')
+  assert.equal(buttons[2]?.attrs['data-kimg-nav-images'], undefined, '别人的行不得被标记')
   assert.equal(typeof observerCallback, 'function', '应挂 MutationObserver 跟随语言/重开')
   for (const dispose of disposers) dispose()
-  assert.equal(buttons[1]?.attrs['data-kimg-nav-vision'], undefined, 'disposer 应清除标记')
+  assert.equal(buttons[1]?.attrs['data-kimg-nav-images'], undefined, 'disposer 应清除标记')
 })
 
 test('宿主缺插槽时不抛异常（软探测）', () => {
@@ -263,7 +267,14 @@ test('设置页面板真实渲染：类型下拉列出 openai-responses，且渲
   const effects: Array<() => void> = []
   const react = {
     createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => {
-      const node = { type, props: (props || {}) as Record<string, unknown>, children }
+      const resolved = (props || {}) as Record<string, unknown>
+      if (typeof type === 'function') {
+        // 迷你渲染器：函数组件必须真的执行——设置页里的页签面板是子组件，
+        // 只记录 createElement 节点的话永远渲染不到表单/工坊。
+        elements.push({ type: (type as { name?: string }).name || 'Component', props: resolved, children })
+        return (type as (input: Record<string, unknown>) => unknown)(resolved)
+      }
+      const node = { type, props: resolved, children }
       elements.push(node)
       return node
     },
@@ -392,4 +403,115 @@ test('卡片走插件自家 fenced API，凭据输入为 password 且源码无�
   assert.ok(source.includes('/dsh-kylin-images/api'))
   assert.ok(!/sk-[a-zA-Z0-9]{8,}/.test(source), 'client.js 不应出现任何形似密钥的字面量')
   assert.ok(source.includes('password'), 'API Key 输入应为 password 类型')
+})
+
+test('合并后的设置页：一个菜单里两个页签，切到「漫画项目」渲染工坊', async () => {
+  type Node = { type: unknown; props: Record<string, unknown>; children: unknown[] }
+  const elements: Node[] = []
+  const store: unknown[] = []
+  const effects: Array<() => void> = []
+  let cursor = 0
+  const react = {
+    createElement: (type: unknown, props: Record<string, unknown> | null, ...children: unknown[]) => {
+      const resolved = (props || {}) as Record<string, unknown>
+      if (typeof type === 'function') {
+        // 迷你渲染器：函数组件必须真的执行——设置页里的页签面板是子组件，
+        // 只记录 createElement 节点的话永远渲染不到表单/工坊。
+        elements.push({ type: (type as { name?: string }).name || 'Component', props: resolved, children })
+        return (type as (input: Record<string, unknown>) => unknown)(resolved)
+      }
+      const node = { type, props: resolved, children }
+      elements.push(node)
+      return node
+    },
+    useState: (initial: unknown) => {
+      const slot = cursor
+      cursor += 1
+      if (store[slot] === undefined) store[slot] = initial
+      return [
+        store[slot],
+        (next: unknown) => {
+          store[slot] = typeof next === 'function' ? (next as (prev: unknown) => unknown)(store[slot]) : next
+        },
+      ]
+    },
+    useEffect: (fn: () => void) => { effects.push(fn) },
+    useCallback: (fn: unknown) => fn,
+  }
+  const sandbox = {
+    window: {
+      __ModuleLoader__: {
+        load(options: { factory: (require: (name: string) => unknown) => unknown }) {
+          captured = options.factory((name: string) => (name === 'react' ? react : {}))
+        },
+      },
+    },
+    navigator: { language: 'zh-CN' },
+    document: { getElementById: () => null, createElement: () => ({ textContent: '', parentNode: null }), head: { appendChild: () => undefined } },
+    console,
+    fetch: () => Promise.resolve({ json: () => Promise.resolve({ ok: true, value: [] }) }),
+  }
+  let captured: unknown
+  vm.runInNewContext(readFileSync(join(ROOT, 'client.js'), 'utf8'), sandbox, { filename: 'client.js' })
+  const mod = captured as { apply: (ctx: unknown) => void }
+  const registered: Array<Record<string, unknown>> = []
+  mod.apply({
+    effect: (register: () => unknown) => register(),
+    slots: {
+      inject: (_seat: string, register: () => unknown) => register(),
+      register: (options: Record<string, unknown>, component?: unknown) => {
+        registered.push({ ...options, component })
+        return () => undefined
+      },
+    },
+  })
+  const component = registered[0]?.['component'] as (() => unknown) | undefined
+  assert.equal(typeof component, 'function')
+
+  // 首屏：页签条 + 默认的「视觉模型」配置页
+  cursor = 0
+  elements.length = 0
+  effects.length = 0
+  assert.doesNotThrow(() => { component?.() })
+  const tabs = elements.find((node) => node.props['role'] === 'tablist')
+  assert.ok(tabs !== undefined, '合并后的设置页应有页签条')
+  const tabLabels = elements.filter((node) => node.props['role'] === 'tab').map((node) => String(node.children[0] ?? ''))
+  assert.deepEqual(tabLabels, ['视觉模型', '漫画项目'])
+  assert.deepEqual(
+    elements.filter((node) => node.props['role'] === 'tab').map((node) => node.props['data-active']),
+    ['true', 'false'],
+    '默认停在视觉模型页',
+  )
+  // 首屏是 loading 态，跑完副作用再渲染一次才拿到表单
+  for (const run of effects) run()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  cursor = 0
+  elements.length = 0
+  effects.length = 0
+  assert.doesNotThrow(() => { component?.() })
+  assert.ok(
+    elements.some((node) => String(node.children[0] ?? '').includes('决定「用什么画')),
+    '默认页应是视觉模型配置',
+  )
+
+  // 切到「漫画项目」：同一菜单内换页，而不是第二个导航项
+  const projectsTab = elements.find((node) => node.props['role'] === 'tab' && String(node.children[0] ?? '') === '漫画项目')
+  ;(projectsTab?.props['onClick'] as (() => void) | undefined)?.()
+  // 换页后子组件重新挂载：只保留页签自身的 state（slot 0）
+  store.length = 1
+  cursor = 0
+  elements.length = 0
+  effects.length = 0
+  assert.doesNotThrow(() => { component?.() })
+  for (const run of effects) run()
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  await new Promise((resolve) => setTimeout(resolve, 0))
+  cursor = 0
+  elements.length = 0
+  assert.doesNotThrow(() => { component?.() })
+  assert.ok(
+    elements.some((node) => String(node.children[0] ?? '').includes('还没有漫画项目')),
+    '工坊页应渲染项目列表（空态）',
+  )
 })
